@@ -259,3 +259,58 @@ async def clear_all_incidents(db: Session = Depends(get_db)):
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+        
+@router.post("/import-excel")
+async def import_military_excel(
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db)
+):
+    """Импорт военных инцидентов из Excel"""
+    if not file.filename.endswith(('.xlsx', '.xls')):
+        raise HTTPException(status_code=400, detail="Файл должен быть в формате Excel")
+    
+    try:
+        content = await file.read()
+        importer = ExcelImporter(db)
+        result = importer.import_military_situations(content)
+        
+        if result['success']:
+            return {
+                "status": "success",
+                "imported": result.get('imported', 0),
+                "message": f"Импортировано {result.get('imported', 0)} записей",
+                "errors": result.get('errors', [])
+            }
+        else:
+            raise HTTPException(status_code=400, detail=result.get('error', 'Ошибка импорта'))
+            
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Ошибка при обработке файла: {str(e)}")
+
+
+@router.get("/download-template")
+async def download_military_template():
+    """Скачать шаблон Excel для военных инцидентов"""
+    importer = ExcelImporter(None)
+    content = importer.download_template_military()
+    
+    return Response(
+        content=content,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": "attachment; filename=military_template.xlsx"}
+    )
+
+
+@router.post("/clear-all")
+async def clear_all_incidents(db: Session = Depends(get_db)):
+    """Полная очистка таблицы военных инцидентов"""
+    try:
+        count = db.query(MilitarySituation).count()
+        db.query(MilitarySituation).delete()
+        db.commit()
+        return {
+            "status": "success",
+            "message": f"Удалено {count} записей"
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))

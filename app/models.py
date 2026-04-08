@@ -67,6 +67,7 @@ class MilitarySituation(Base):
     victim_count = Column(Integer, default=0)
     victim_death = Column(Integer, default=0)
     drone_count = Column(Integer, default=0)
+    initiator_name = Column(String, nullable=True)  # ДОБАВИТЬ ЭТУ СТРОКУ
     incident_initiator_id = Column(Integer, ForeignKey("incident_initiators.id"))
     
     incident_initiator = relationship("IncidentInitiator", back_populates="military_situations")
