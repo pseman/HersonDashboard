@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}HersonDashboard{% endblock %}</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.datatables.net/1.13.4/css/dataTables.bootstrap5.min.css" rel="stylesheet">
+    <style>
+        .navbar-brand {
+            font-weight: bold;
+        }
+        .sidebar {
+            min-height: 100vh;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        }
+        .sidebar .nav-link {
+            color: white;
+            padding: 10px 20px;
+            margin: 5px 0;
+            border-radius: 5px;
+        }
+        .sidebar .nav-link:hover {
+            background: rgba(255,255,255,0.2);
+        }
+        .sidebar .nav-link.active {
+            background: rgba(255,255,255,0.3);
+        }
+        .content {
+            padding: 20px;
+        }
+    </style>
+    {% block extra_css %}{% endblock %}
+</head>
+<body>
+    <div class="container-fluid">
+        <div class="row">
+            <!-- Sidebar -->
+            <div class="col-md-2 sidebar p-0">
+                <div class="p-3">
+                    <h4 class="text-white mb-4">📊 HersonDashboard</h4>
+                    <nav class="nav flex-column">
+                        <a class="nav-link {% if active_page == 'dashboard' %}active{% endif %}" href="/">
+                            📈 Главная
+                        </a>
+                        <a class="nav-link {% if active_page == 'criminal' %}active{% endif %}" href="/criminal">
+                            🔍 Криминальная обстановка
+                        </a>
+                        <a class="nav-link {% if active_page == 'military' %}active{% endif %}" href="/military">
+                            ⚔️ Военные инциденты
+                        </a>
+                    </nav>
+                </div>
+            </div>
+            
+            <!-- Main content -->
+            <div class="col-md-10 content">
+                {% block content %}{% endblock %}
+            </div>
+        </div>
+    </div>
+    
+    <!-- Скрипты загружаем в правильном порядке -->
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="https://cdn.datatables.net/1.13.4/js/jquery.dataTables.min.js"></script>
+    <script src="https://cdn.datatables.net/1.13.4/js/dataTables.bootstrap5.min.js"></script>
+    {% block extra_js %}{% endblock %}
+</body>
+</html>

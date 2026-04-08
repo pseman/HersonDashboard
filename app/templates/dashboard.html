@@ -1,0 +1,114 @@
+{% extends "base.html" %}
+
+{% block title %}HersonDashboard - Главная{% endblock %}
+
+{% block content %}
+<h1 class="mb-4">📊 Панель мониторинга</h1>
+
+<div class="row mb-4">
+    <div class="col-md-3">
+        <div class="card text-white bg-primary">
+            <div class="card-body">
+                <h5 class="card-title">Всего преступлений</h5>
+                <h2>{{ total_crimes }}</h2>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card text-white bg-danger">
+            <div class="card-body">
+                <h5 class="card-title">Ущерб (млн. руб.)</h5>
+                <h2>{{ "%.2f"|format(total_damage / 1000000) }}</h2>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card text-white bg-success">
+            <div class="card-body">
+                <h5 class="card-title">Всего инцидентов</h5>
+                <h2>{{ total_incidents }}</h2>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card text-white bg-warning">
+            <div class="card-body">
+                <h5 class="card-title">Пострадавшие</h5>
+                <h2>{{ total_victims }}</h2>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row">
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-header">
+                <h5>Преступления по категориям</h5>
+            </div>
+            <div class="card-body">
+                <canvas id="crimeChart" height="300"></canvas>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-header">
+                <h5>Территориальное распределение</h5>
+            </div>
+            <div class="card-body">
+                <canvas id="omvdChart" height="300"></canvas>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script>
+    // Данные передаются как простые списки
+    const crimeLabels = {{ crime_labels | tojson }};
+    const crimeValues = {{ crime_values | tojson }};
+    const omvdLabels = {{ omvd_labels | tojson }};
+    const omvdValues = {{ omvd_values | tojson }};
+
+    new Chart(document.getElementById('crimeChart'), {
+        type: 'bar',
+        data: {
+            labels: crimeLabels,
+            datasets: [{
+                label: 'Количество преступлений',
+                data: crimeValues,
+                backgroundColor: 'rgba(54, 162, 235, 0.5)',
+                borderColor: 'rgba(54, 162, 235, 1)',
+                borderWidth: 1
+            }]
+        },
+        options: {
+            responsive: true,
+            scales: {
+                y: {
+                    beginAtZero: true,
+                    ticks: { stepSize: 1 }
+                }
+            }
+        }
+    });
+
+    new Chart(document.getElementById('omvdChart'), {
+        type: 'pie',
+        data: {
+            labels: omvdLabels,
+            datasets: [{
+                data: omvdValues,
+                backgroundColor: ['#FF6384', '#36A2EB', '#FFCE56', '#4BC0C0', '#9966FF', '#FF9F40']
+            }]
+        },
+        options: {
+            responsive: true,
+            plugins: {
+                legend: { position: 'bottom' }
+            }
+        }
+    });
+</script>
+{% endblock %}

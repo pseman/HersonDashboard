@@ -1,0 +1,283 @@
+{% extends "base.html" %}
+
+{% block title %}Военные инциденты - HersonDashboard{% endblock %}
+
+{% block content %}
+<h1 class="mb-4">⚔️ Военные инциденты</h1>
+
+<!-- Блок импорта Excel -->
+<div class="row mb-4">
+    <div class="col-md-12">
+        <div class="card">
+            <div class="card-header bg-success text-white">
+                <h5 class="mb-0">📥 Импорт данных из Excel</h5>
+            </div>
+            <div class="card-body">
+                <div class="row align-items-end">
+                    <div class="col-md-6">
+                        <form id="importForm" enctype="multipart/form-data">
+                            <div class="mb-3">
+                                <label class="form-label">Выберите Excel файл</label>
+                                <input type="file" id="excelFile" name="file" class="form-control" accept=".xlsx,.xls" required>
+                                <div class="form-text">Файл должен содержать колонки: incident_date, incident_time, incident_name, employe_action, time_cancel_incident, incident_effect, victim_count, victim_death, drone_count, initiator_name</div>
+                            </div>
+                            <button type="submit" class="btn btn-success">
+                                📥 Импортировать
+                            </button>
+							<button type="button" class="btn btn-danger ms-2" data-bs-toggle="modal" data-bs-target="#clearModal">
+								🗑️ Очистить таблицу
+							</button>
+
+							<!-- Модальное окно подтверждения -->
+							<div class="modal fade" id="clearModal" tabindex="-1">
+								<div class="modal-dialog">
+									<div class="modal-content">
+										<div class="modal-header bg-danger text-white">
+											<h5 class="modal-title">⚠️ Подтверждение очистки</h5>
+											<button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+										</div>
+										<div class="modal-body">
+											<p>Вы действительно хотите <strong>УДАЛИТЬ ВСЕ</strong> записи из таблицы военных инцидентов?</p>
+										<p class="text-danger">Это действие невозможно отменить!</p>
+										</div>
+										<div class="modal-footer">
+											<button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button>
+											<button type="button" id="confirmClear" class="btn btn-danger">Да, удалить всё</button>
+										</div>
+									</div>
+								</div>
+							</div>
+                            <a href="/military/download-template" class="btn btn-info ms-2">
+                                📄 Скачать шаблон
+                            </a>
+                            <a href="/military/export-pdf" class="btn btn-danger ms-2">
+                                📄 Экспорт PDF
+                            </a>
+                        </form>
+                    </div>
+                    <div class="col-md-6">
+                        <div id="importResult" style="display: none;" class="alert"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Форма добавления инцидента -->
+<div class="card mb-4">
+    <div class="card-header">
+        <h5>Добавить новый инцидент</h5>
+    </div>
+    <div class="card-body">
+        <form id="incidentForm">
+            <div class="row">
+                <div class="col-md-3 mb-3">
+                    <label class="form-label">Дата инцидента</label>
+                    <input type="date" name="incident_date" class="form-control" required>
+                </div>
+                <div class="col-md-2 mb-3">
+                    <label class="form-label">Время</label>
+                    <input type="time" name="incident_time" class="form-control">
+                </div>
+                <div class="col-md-4 mb-3">
+                    <label class="form-label">Название инцидента</label>
+                    <input type="text" name="incident_name" class="form-control">
+                </div>
+                <div class="col-md-3 mb-3">
+                    <label class="form-label">Действия сотрудников</label>
+                    <input type="text" name="employe_action" class="form-control">
+                </div>
+            </div>
+            <div class="row">
+                <div class="col-md-2 mb-3">
+                    <label class="form-label">Пострадавшие</label>
+                    <input type="number" name="victim_count" class="form-control" value="0">
+                </div>
+                <div class="col-md-2 mb-3">
+                    <label class="form-label">Погибшие</label>
+                    <input type="number" name="victim_death" class="form-control" value="0">
+                </div>
+                <div class="col-md-2 mb-3">
+                    <label class="form-label">Количество дронов</label>
+                    <input type="number" name="drone_count" class="form-control" value="0">
+                </div>
+                <div class="col-md-3 mb-3">
+                    <label class="form-label">Инициатор</label>
+                    <select name="incident_initiator_id" class="form-control">
+                        <option value="">Выберите...</option>
+                        {% for init in initiators %}
+                        <option value="{{ init.id }}">{{ init.initiator_name }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-md-3 mb-3">
+                    <label class="form-label">Время отмены</label>
+                    <input type="time" name="time_cancel_incident" class="form-control">
+                </div>
+            </div>
+            <div class="row">
+                <div class="col-md-12 mb-3">
+                    <label class="form-label">Последствия инцидента</label>
+                    <input type="text" name="incident_effect" class="form-control">
+                </div>
+            </div>
+            <button type="submit" class="btn btn-primary">Добавить</button>
+        </form>
+    </div>
+</div>
+
+<!-- Таблица с данными -->
+<div class="card">
+    <div class="card-header">
+        <h5>Список инцидентов</h5>
+    </div>
+    <div class="card-body">
+        <table id="incidentsTable" class="table table-striped">
+            <thead>
+                <tr>
+                    <th>ID</th>
+                    <th>Дата</th>
+                    <th>Время</th>
+                    <th>Название</th>
+                    <th>Пострадавшие</th>
+                    <th>Погибшие</th>
+                    <th>Дроны</th>
+                    <th>Инициатор</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for incident in incidents %}
+                <tr>
+                    <td>{{ incident.id }}</td>
+                    <td>{{ incident.incident_date }}</td>
+                    <td>{{ incident.incident_time if incident.incident_time else '-' }}</td>
+                    <td>{{ incident.incident_name if incident.incident_name else '-' }}</td>
+                    <td>{{ incident.victim_count }}</td>
+                    <td>{{ incident.victim_death }}</td>
+                    <td>{{ incident.drone_count }}</td>
+                    <td>{{ incident.incident_initiator.initiator_name if incident.incident_initiator else '-' }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+$(document).ready(function() {
+    // Инициализация DataTable
+    $('#incidentsTable').DataTable({
+        language: {
+            url: '//cdn.datatables.net/plug-ins/1.13.4/i18n/ru.json'
+        },
+        order: [[0, 'desc']]  // Сортировка по ID по убыванию
+    });
+    
+    // Обработка формы добавления инцидента
+    $('#incidentForm').on('submit', function(e) {
+        e.preventDefault();
+        
+        var formData = {};
+        $(this).serializeArray().forEach(function(item) {
+            formData[item.name] = item.value;
+        });
+        
+        $.ajax({
+            url: '/military/add',
+            method: 'POST',
+            contentType: 'application/json',
+            data: JSON.stringify(formData),
+            success: function(response) {
+                location.reload();
+            },
+            error: function(xhr) {
+                alert('Ошибка: ' + (xhr.responseJSON?.detail || 'Неизвестная ошибка'));
+            }
+        });
+    });
+    
+    // Обработка импорта Excel
+    $('#importForm').on('submit', function(e) {
+        e.preventDefault();
+        
+        var formData = new FormData(this);
+        var fileInput = document.getElementById('excelFile');
+        
+        if (!fileInput.files || fileInput.files.length === 0) {
+            showResult('Пожалуйста, выберите файл', 'danger');
+            return;
+        }
+        
+        var file = fileInput.files[0];
+        if (!file.name.match(/\.(xlsx|xls)$/)) {
+            showResult('Пожалуйста, выберите файл Excel (.xlsx или .xls)', 'danger');
+            return;
+        }
+        
+        showResult('Импорт... Пожалуйста, подождите', 'info');
+        
+        $.ajax({
+            url: '/military/import-excel',
+            method: 'POST',
+            data: formData,
+            contentType: false,
+            processData: false,
+            success: function(response) {
+                if (response.status === 'success') {
+                    var message = '✅ Импортировано: ' + response.imported + ' записей';
+                    if (response.errors && response.errors.length > 0) {
+                        message += '<br>⚠️ Ошибки: ' + response.errors.length;
+                        console.log('Ошибки импорта:', response.errors);
+                    }
+                    showResult(message, 'success');
+                    setTimeout(function() {
+                        location.reload();
+                    }, 2000);
+                } else {
+                    showResult('❌ ' + response.message, 'danger');
+                }
+            },
+            error: function(xhr) {
+                var errorMsg = xhr.responseJSON?.detail || 'Ошибка при импорте';
+                showResult('❌ ' + errorMsg, 'danger');
+                console.error('Ошибка импорта:', xhr);
+            }
+        });
+    });
+	
+	// Очистка таблицы
+	$('#confirmClear').on('click', function() {
+		$.ajax({
+			url: '/military/clear-all',
+			method: 'POST',
+			contentType: 'application/json',
+			success: function(response) {
+				$('#clearModal').modal('hide');
+				showResult('✅ ' + response.message, 'success');
+				setTimeout(function() {
+					location.reload();
+				}, 1500);
+			},
+			error: function(xhr) {
+				showResult('❌ Ошибка при очистке: ' + (xhr.responseJSON?.detail || 'Неизвестная ошибка'), 'danger');
+			}
+		});
+	});
+    
+    function showResult(message, type) {
+        var resultDiv = $('#importResult');
+        resultDiv.removeClass('alert-success alert-danger alert-info')
+                 .addClass('alert-' + type)
+                 .html(message)
+                 .show();
+        
+        setTimeout(function() {
+            resultDiv.fadeOut();
+        }, 5000);
+    }
+});
+</script>
+{% endblock %}
