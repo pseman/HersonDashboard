@@ -62,15 +62,19 @@ class ExcelImporter:
                             pass
                     
                     victim_birthday = None
-                    if pd.notna(row['victim_birthday']):
+                    if 'victim_birthday' in df.columns and pd.notna(row['victim_birthday']):
                         try:
                             date_str = str(row['victim_birthday']).strip()
                             if ' ' in date_str:
                                 date_str = date_str.split(' ')[0]
                             if '.' in date_str:
                                 victim_birthday = datetime.strptime(date_str, '%d.%m.%Y').date()
+                            elif '-' in date_str:
+                                victim_birthday = datetime.strptime(date_str, '%Y-%m-%d').date()
                         except:
-                            pass
+                            victim_birthday = None
+                    
+                    
                     
                     registration_number = int(row['registration_number']) if pd.notna(row['registration_number']) else None
                     victim_gender = int(row['victim_gender']) if pd.notna(row['victim_gender']) else None

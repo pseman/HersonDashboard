@@ -270,3 +270,17 @@ async def criminal_list(request: Request, db: Session = Depends(get_db)):
 </html>
     """
     return HTMLResponse(content=html)
+
+@router.post("/clear-all")
+async def clear_all_crimes(db: Session = Depends(get_db)):
+    """Полная очистка таблицы криминальных ситуаций"""
+    try:
+        count = db.query(CriminalSituation).count()
+        db.query(CriminalSituation).delete()
+        db.commit()
+        return {
+            "status": "success",
+            "message": f"Удалено {count} записей"
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))

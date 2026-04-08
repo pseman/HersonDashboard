@@ -245,3 +245,17 @@ async def military_list(request: Request, db: Session = Depends(get_db)):
 </html>
     """
     return HTMLResponse(content=html)
+    
+@router.post("/clear-all")
+async def clear_all_incidents(db: Session = Depends(get_db)):
+    """Полная очистка таблицы военных инцидентов"""
+    try:
+        count = db.query(MilitarySituation).count()
+        db.query(MilitarySituation).delete()
+        db.commit()
+        return {
+            "status": "success",
+            "message": f"Удалено {count} записей"
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
