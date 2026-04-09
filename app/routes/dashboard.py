@@ -6,9 +6,9 @@ from app.database import get_db
 from app.models import CriminalSituation, MilitarySituation
 from datetime import date
 import json
+from collections import Counter
 
 router = APIRouter()
-
 
 def calculate_age(birth_date, crime_date):
     """Расчёт возраста на момент преступления"""
@@ -16,7 +16,6 @@ def calculate_age(birth_date, crime_date):
         return None
     try:
         age = crime_date.year - birth_date.year
-        # Корректировка, если день рождения ещё не наступил
         if (crime_date.month, crime_date.day) < (birth_date.month, birth_date.day):
             age -= 1
         if age < 0 or age > 120:
@@ -25,8 +24,14 @@ def calculate_age(birth_date, crime_date):
     except:
         return None
 
-
-
+def get_month_name(month_num):
+    """Преобразует номер месяца в название на русском"""
+    months = {
+        '01': 'январь', '02': 'февраль', '03': 'март', '04': 'апрель',
+        '05': 'май', '06': 'июнь', '07': 'июль', '08': 'август',
+        '09': 'сентябрь', '10': 'октябрь', '11': 'ноябрь', '12': 'декабрь'
+    }
+    return months.get(month_num, month_num)
 
 @router.get("/", response_class=HTMLResponse)
 async def dashboard(request: Request, db: Session = Depends(get_db)):
@@ -51,18 +56,15 @@ async def dashboard(request: Request, db: Session = Depends(get_db)):
     top_crime_count = top_crime_type[1] if top_crime_type else 0
     top_crime_percent = round((top_crime_count / total_crimes * 100), 1) if total_crimes > 0 else 0
     
-    # ========== 2. УЯЗВИМЫЕ ГРУППЫ ПО ВОЗРАСТУ ==========
-    # Получаем все записи с датами
-    # В блоке возрастных групп используем crime_date и victim_birthday
+    # ========== 2. УЯЗВИМАЯ ВОЗРАСТНАЯ ГРУППА ==========
     victims_data = db.query(
         CriminalSituation.victim_birthday,
-        CriminalSituation.crime_date  # используем crime_date
+        CriminalSituation.crime_date
     ).filter(
         CriminalSituation.victim_birthday.isnot(None),
         CriminalSituation.crime_date.isnot(None)
     ).all()
     
-    # Считаем возрастные группы
     age_groups = {
         "1. 10-25 лет": 0,
         "2. 26-30 лет": 0,
@@ -90,21 +92,86 @@ async def dashboard(request: Request, db: Session = Depends(get_db)):
         else:
             age_groups["Не указано"] += 1
     
-    # Для отображения на графике (исключаем "Не указано")
-    chart_age_labels = [k for k, v in age_groups.items() if k != "Не указано" and v > 0]
-    chart_age_values = [age_groups[k] for k in chart_age_labels]
+    max_group = max([(k, v) for k, v in age_groups.items() if k != "Не указано" and v > 0], key=lambda x: x[1], default=("Нет данных", 0))
     
-    # Находим самую уязвимую группу (с максимальным значением, исключая "Не указано")
-    max_group = max([(k, v) for k, v in age_groups.items() if k != "Не указано"], key=lambda x: x[1], default=("Нет данных", 0))
+    # ========== 3. ОСНОВНОЙ ВИД ИНЦИДЕНТОВ ==========
+    incident_names = db.query(
+        MilitarySituation.incident_name,
+        func.count(MilitarySituation.id).label("count")
+    ).filter(
+        MilitarySituation.incident_name.isnot(None),
+        MilitarySituation.incident_name != ''
+    ).group_by(MilitarySituation.incident_name).order_by(
+        func.count(MilitarySituation.id).desc()
+    ).first()
     
-    # ========== 3. РАСПРЕДЕЛЕНИЕ ПО ПОЛУ ==========
-    # victim_gender: 0 - мужской, 1 - женский
-    gender_counts = {
-        "Мужской": 0,
-        "Женский": 0,
-        "Не указано": 0
-    }
+    top_incident_name = incident_names[0] if incident_names else "Нет данных"
+    top_incident_count = incident_names[1] if incident_names else 0
+    top_incident_percent = round((top_incident_count / total_incidents * 100), 1) if total_incidents > 0 else 0
     
+    # ========== 4. ГРАФИКИ ДЛЯ КРИМИНАЛЬНОЙ ОБСТАНОВКИ ==========
+    crime_stats = db.query(
+        CriminalSituation.crime_category_name,
+        func.count(CriminalSituation.id).label("count")
+    ).filter(
+        CriminalSituation.crime_category_name.isnot(None),
+        CriminalSituation.crime_category_name != ''
+    ).group_by(CriminalSituation.crime_category_name).all()
+    
+    omvd_stats = db.query(
+        CriminalSituation.omvd_name,
+        func.count(CriminalSituation.id).label("count")
+    ).filter(
+        CriminalSituation.omvd_name.isnot(None),
+        CriminalSituation.omvd_name != ''
+    ).group_by(CriminalSituation.omvd_name).order_by(
+        func.count(CriminalSituation.id).desc()
+    ).limit(5).all()
+    
+    crime_labels = [c[0] for c in crime_stats]
+    crime_values = [c[1] for c in crime_stats]
+    omvd_labels = [o[0] for o in omvd_stats]
+    omvd_values = [o[1] for o in omvd_stats]
+    top3_crimes = crime_stats[:3] if crime_stats else []
+    
+    # ========== 5. ДИНАМИКА ПРЕСТУПЛЕНИЙ ПО МЕСЯЦАМ ==========
+    monthly_crimes = db.query(
+        func.strftime('%Y-%m', CriminalSituation.crime_date).label("month"),
+        func.count(CriminalSituation.id).label("count")
+    ).filter(
+        CriminalSituation.crime_date.isnot(None)
+    ).group_by("month").order_by("month").limit(12).all()
+    
+    monthly_crime_labels = []
+    monthly_crime_values = []
+    for m in monthly_crimes:
+        month_num = m[0].split('-')[1]
+        monthly_crime_labels.append(get_month_name(month_num))
+        monthly_crime_values.append(m[1])
+    
+    # ========== 6. ДИНАМИКА ИНЦИДЕНТОВ ПО МЕСЯЦАМ ==========
+    monthly_incidents = db.query(
+        func.strftime('%Y-%m', MilitarySituation.incident_date).label("month"),
+        func.count(MilitarySituation.id).label("incident_count"),
+        func.sum(MilitarySituation.victim_count).label("total_victims"),
+        func.sum(MilitarySituation.victim_death).label("total_deaths")
+    ).filter(
+        MilitarySituation.incident_date.isnot(None)
+    ).group_by("month").order_by("month").limit(12).all()
+    
+    monthly_incident_labels = []
+    monthly_incident_counts = []
+    monthly_victim_counts = []
+    monthly_death_counts = []
+    for m in monthly_incidents:
+        month_num = m[0].split('-')[1]
+        monthly_incident_labels.append(get_month_name(month_num))
+        monthly_incident_counts.append(m[1])
+        monthly_victim_counts.append(m[2] if m[2] else 0)
+        monthly_death_counts.append(m[3] if m[3] else 0)
+    
+    # ========== 7. РАСПРЕДЕЛЕНИЕ ПО ПОЛУ ==========
+    gender_counts = {"Мужской": 0, "Женский": 0, "Не указано": 0}
     gender_stats_raw = db.query(
         CriminalSituation.victim_gender,
         func.count(CriminalSituation.id).label("count")
@@ -120,54 +187,6 @@ async def dashboard(request: Request, db: Session = Depends(get_db)):
     
     gender_labels = [g for g in gender_counts.keys() if gender_counts[g] > 0]
     gender_values = [gender_counts[g] for g in gender_labels]
-    
-    # ========== 4. ОСТАЛЬНЫЕ ГРАФИКИ ==========
-    # Преступления по категориям
-    crime_stats = db.query(
-        CriminalSituation.crime_category_name,
-        func.count(CriminalSituation.id).label("count")
-    ).filter(
-        CriminalSituation.crime_category_name.isnot(None),
-        CriminalSituation.crime_category_name != ''
-    ).group_by(CriminalSituation.crime_category_name).all()
-    
-    # Территориальное распределение (Топ-5)
-    omvd_stats = db.query(
-        CriminalSituation.omvd_name,
-        func.count(CriminalSituation.id).label("count")
-    ).filter(
-        CriminalSituation.omvd_name.isnot(None),
-        CriminalSituation.omvd_name != ''
-    ).group_by(CriminalSituation.omvd_name).order_by(
-        func.count(CriminalSituation.id).desc()
-    ).limit(5).all()
-    
-    crime_labels = [c[0] for c in crime_stats]
-    crime_values = [c[1] for c in crime_stats]
-    
-    omvd_labels = [o[0] for o in omvd_stats]
-    omvd_values = [o[1] for o in omvd_stats]
-    
-    # Динамика по месяцам
-    monthly_stats = db.query(
-        func.strftime('%Y-%m', CriminalSituation.registration_date).label("month"),
-        func.count(CriminalSituation.id).label("count")
-    ).filter(
-        CriminalSituation.registration_date.isnot(None)
-    ).group_by("month").order_by("month").limit(12).all()
-    
-    monthly_labels = [m[0] for m in monthly_stats]
-    monthly_values = [m[1] for m in monthly_stats]
-    
-    # Топ-3 категории
-    top3_crimes = crime_stats[:3] if crime_stats else []
-    
-    # ========== ОТЛАДОЧНАЯ ИНФОРМАЦИЯ (в лог) ==========
-    print(f"\n📊 ОТЛАДКА ВОЗРАСТНЫХ ГРУПП:")
-    print(f"   Всего записей с датами: {len(victims_data)}")
-    for k, v in age_groups.items():
-        print(f"   {k}: {v}")
-    print(f"   Самая уязвимая группа: {max_group[0]} ({max_group[1]})")
     
     # Формируем HTML
     html = f"""
@@ -200,6 +219,10 @@ async def dashboard(request: Request, db: Session = Depends(get_db)):
             font-size: 2rem;
             font-weight: bold;
         }}
+        .stat-card {{
+            transition: transform 0.3s;
+        }}
+        .stat-card:hover {{ transform: translateY(-5px); }}
     </style>
 </head>
 <body>
@@ -219,10 +242,10 @@ async def dashboard(request: Request, db: Session = Depends(get_db)):
             <div class="col-md-10 content">
                 <h1 class="mb-4">Панель мониторинга</h1>
                 
-                <!-- Карточки статистики -->
+                <!-- Верхние карточки статистики -->
                 <div class="row mb-4">
                     <div class="col-md-3">
-                        <div class="card text-white bg-primary">
+                        <div class="card text-white bg-primary stat-card">
                             <div class="card-body">
                                 <h5>Всего преступлений</h5>
                                 <h2>{total_crimes}</h2>
@@ -230,7 +253,7 @@ async def dashboard(request: Request, db: Session = Depends(get_db)):
                         </div>
                     </div>
                     <div class="col-md-3">
-                        <div class="card text-white bg-danger">
+                        <div class="card text-white bg-danger stat-card">
                             <div class="card-body">
                                 <h5>Ущерб (млн. руб.)</h5>
                                 <h2>{total_damage/1000000:.2f}</h2>
@@ -238,7 +261,7 @@ async def dashboard(request: Request, db: Session = Depends(get_db)):
                         </div>
                     </div>
                     <div class="col-md-3">
-                        <div class="card text-white bg-success">
+                        <div class="card text-white bg-success stat-card">
                             <div class="card-body">
                                 <h5>Всего инцидентов</h5>
                                 <h2>{total_incidents}</h2>
@@ -246,7 +269,7 @@ async def dashboard(request: Request, db: Session = Depends(get_db)):
                         </div>
                     </div>
                     <div class="col-md-3">
-                        <div class="card text-white bg-warning">
+                        <div class="card text-white bg-warning stat-card">
                             <div class="card-body">
                                 <h5>Пострадавшие</h5>
                                 <h2>{total_victims}</h2>
@@ -255,23 +278,54 @@ async def dashboard(request: Request, db: Session = Depends(get_db)):
                     </div>
                 </div>
 
-                <!-- Аналитические инсайты -->
+                <!-- Аналитические инсайты (4 карточки) -->
                 <div class="row mb-4">
-                    <div class="col-md-6">
+                    <div class="col-md-3">
                         <div class="card insight-card">
                             <div class="card-body">
                                 <h5>🎯 Основной тип преступлений</h5>
                                 <div class="insight-number">{top_crime_name}</div>
-                                <p>{top_crime_count} преступлений ({top_crime_percent}%)</p>
+                                <p>{top_crime_count} ({top_crime_percent}%)</p>
                             </div>
                         </div>
                     </div>
-                    <div class="col-md-6">
+                    <div class="col-md-3">
                         <div class="card insight-card">
                             <div class="card-body">
-                                <h5>⚠️ Самая уязвимая возрастная группа</h5>
+                                <h5>⚠️ Уязвимая возрастная группа</h5>
                                 <div class="insight-number">{max_group[0]}</div>
                                 <p>{max_group[1]} пострадавших</p>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-3">
+                        <div class="card insight-card">
+                            <div class="card-body">
+                                <h5>⚔️ Основной вид инцидентов</h5>
+                                <div class="insight-number">{top_incident_name}</div>
+                                <p>{top_incident_count} ({top_incident_percent}%)</p>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-3">
+                        <div class="card text-white bg-secondary stat-card">
+                            <div class="card-body">
+                                <h5>📋 Общее количество военных инцидентов</h5>
+                                <h2>{total_incidents}</h2>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- График динамики преступлений -->
+                <div class="row mb-4">
+                    <div class="col-md-12">
+                        <div class="card">
+                            <div class="card-header bg-success text-white">
+                                <h5>📈 Динамика преступлений по месяцам</h5>
+                            </div>
+                            <div class="card-body">
+                                <canvas id="crimeMonthlyChart" height="150"></canvas>
                             </div>
                         </div>
                     </div>
@@ -291,7 +345,7 @@ async def dashboard(request: Request, db: Session = Depends(get_db)):
                     <div class="col-md-4 mb-4">
                         <div class="card h-100">
                             <div class="card-header bg-info text-white">
-                                <h5>🏆 Топ-3 категории</h5>
+                                <h5>🏆 Топ-3 категории преступлений</h5>
                             </div>
                             <div class="card-body">
                                 <ol class="list-group list-group-numbered">
@@ -328,24 +382,25 @@ async def dashboard(request: Request, db: Session = Depends(get_db)):
                 <div class="row">
                     <div class="col-md-12 mb-4">
                         <div class="card">
-                            <div class="card-header bg-success text-white">
-                                <h5>📈 Динамика по месяцам</h5>
+                            <div class="card-header bg-danger text-white">
+                                <h5>🗺️ Территориальное распределение преступлений (Топ-5)</h5>
                             </div>
                             <div class="card-body">
-                                <canvas id="monthlyChart" height="200"></canvas>
+                                <canvas id="omvdChart" height="250"></canvas>
                             </div>
                         </div>
                     </div>
                 </div>
 
+                <!-- Динамика военных инцидентов (в самом низу) -->
                 <div class="row">
-                    <div class="col-md-12 mb-4">
+                    <div class="col-md-12">
                         <div class="card">
-                            <div class="card-header bg-danger text-white">
-                                <h5>🗺️ Территориальное распределение (Топ-5)</h5>
+                            <div class="card-header bg-info text-white">
+                                <h5>📊 Динамика военных инцидентов по месяцам</h5>
                             </div>
                             <div class="card-body">
-                                <canvas id="omvdChart" height="250"></canvas>
+                                <canvas id="incidentMonthlyChart" height="300"></canvas>
                             </div>
                         </div>
                     </div>
@@ -355,42 +410,119 @@ async def dashboard(request: Request, db: Session = Depends(get_db)):
     </div>
     
     <script>
+        // Данные для графиков
         const crimeLabels = {json.dumps(crime_labels)};
         const crimeValues = {json.dumps(crime_values)};
         const omvdLabels = {json.dumps(omvd_labels)};
         const omvdValues = {json.dumps(omvd_values)};
-        const ageLabels = {json.dumps(chart_age_labels)};
-        const ageValues = {json.dumps(chart_age_values)};
-        const monthlyLabels = {json.dumps(monthly_labels)};
-        const monthlyValues = {json.dumps(monthly_values)};
+        const ageLabels = {json.dumps([k for k in age_groups.keys() if k != "Не указано" and age_groups[k] > 0])};
+        const ageValues = {json.dumps([age_groups[k] for k in age_groups.keys() if k != "Не указано" and age_groups[k] > 0])};
         const genderLabels = {json.dumps(gender_labels)};
         const genderValues = {json.dumps(gender_values)};
+        
+        // Динамика преступлений
+        const monthlyCrimeLabels = {json.dumps(monthly_crime_labels)};
+        const monthlyCrimeValues = {json.dumps(monthly_crime_values)};
+        
+        // Динамика инцидентов
+        const monthlyIncidentLabels = {json.dumps(monthly_incident_labels)};
+        const monthlyIncidentCounts = {json.dumps(monthly_incident_counts)};
+        const monthlyVictimCounts = {json.dumps(monthly_victim_counts)};
+        const monthlyDeathCounts = {json.dumps(monthly_death_counts)};
 
+        // График преступлений по категориям
         new Chart(document.getElementById('crimeChart'), {{
             type: 'bar',
             data: {{ labels: crimeLabels, datasets: [{{ label: 'Количество', data: crimeValues, backgroundColor: 'rgba(54, 162, 235, 0.5)' }}] }},
             options: {{ responsive: true, scales: {{ y: {{ beginAtZero: true }} }} }}
         }});
 
+        // График по ОМВД
         new Chart(document.getElementById('omvdChart'), {{
             type: 'pie',
             data: {{ labels: omvdLabels, datasets: [{{ data: omvdValues, backgroundColor: ['#FF6384','#36A2EB','#FFCE56','#4BC0C0','#9966FF'] }}] }}
         }});
 
+        // График возрастных групп
         new Chart(document.getElementById('ageChart'), {{
             type: 'bar',
             data: {{ labels: ageLabels, datasets: [{{ label: 'Пострадавшие', data: ageValues, backgroundColor: 'rgba(255, 159, 64, 0.5)' }}] }},
             options: {{ responsive: true, scales: {{ y: {{ beginAtZero: true }} }} }}
         }});
 
-        new Chart(document.getElementById('monthlyChart'), {{
-            type: 'line',
-            data: {{ labels: monthlyLabels, datasets: [{{ label: 'Преступления', data: monthlyValues, borderColor: '#28a745', fill: true }}] }}
-        }});
-
+        // График распределения по полу
         new Chart(document.getElementById('genderChart'), {{
             type: 'pie',
             data: {{ labels: genderLabels, datasets: [{{ data: genderValues, backgroundColor: ['#36A2EB','#FF6384','#CED4DA'] }}] }}
+        }});
+
+        // График динамики преступлений по месяцам
+        new Chart(document.getElementById('crimeMonthlyChart'), {{
+            type: 'line',
+            data: {{
+                labels: monthlyCrimeLabels,
+                datasets: [{{
+                    label: 'Количество преступлений',
+                    data: monthlyCrimeValues,
+                    borderColor: '#28a745',
+                    backgroundColor: 'rgba(40, 167, 69, 0.1)',
+                    fill: true,
+                    tension: 0.3
+                }}]
+            }},
+            options: {{
+                responsive: true,
+                scales: {{ y: {{ beginAtZero: true, ticks: {{ stepSize: 1 }} }} }}
+            }}
+        }});
+
+        // График динамики инцидентов по месяцам
+        new Chart(document.getElementById('incidentMonthlyChart'), {{
+            type: 'bar',
+            data: {{
+                labels: monthlyIncidentLabels,
+                datasets: [
+                    {{
+                        label: 'Количество инцидентов',
+                        data: monthlyIncidentCounts,
+                        backgroundColor: 'rgba(54, 162, 235, 0.5)',
+                        borderColor: 'rgba(54, 162, 235, 1)',
+                        borderWidth: 1,
+                        yAxisID: 'y'
+                    }},
+                    {{
+                        label: 'Пострадавшие',
+                        data: monthlyVictimCounts,
+                        backgroundColor: 'rgba(255, 99, 132, 0.5)',
+                        borderColor: 'rgba(255, 99, 132, 1)',
+                        borderWidth: 1,
+                        yAxisID: 'y1'
+                    }},
+                    {{
+                        label: 'Погибшие',
+                        data: monthlyDeathCounts,
+                        backgroundColor: 'rgba(255, 159, 64, 0.5)',
+                        borderColor: 'rgba(255, 159, 64, 1)',
+                        borderWidth: 1,
+                        yAxisID: 'y1'
+                    }}
+                ]
+            }},
+            options: {{
+                responsive: true,
+                scales: {{
+                    y: {{
+                        beginAtZero: true,
+                        title: {{ display: true, text: 'Количество инцидентов' }}
+                    }},
+                    y1: {{
+                        position: 'right',
+                        beginAtZero: true,
+                        title: {{ display: true, text: 'Количество человек' }},
+                        grid: {{ drawOnChartArea: false }}
+                    }}
+                }}
+            }}
         }});
     </script>
 </body>
