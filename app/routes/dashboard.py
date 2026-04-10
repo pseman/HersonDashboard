@@ -537,38 +537,31 @@ async def dashboard(request: Request, db: Session = Depends(get_db)):
 # ========== НОВЫЕ МАРШРУТЫ ДЛЯ ЭКСПОРТА ОТЧЁТОВ ==========
 
 @router.get("/export-full-report")
-async def export_full_report(db: Session = Depends(get_db)):
+async def export_full_report(request: Request, db: Session = Depends(get_db)):
     from fastapi.responses import Response
     import os
-    from io import BytesIO
-    from reportlab.lib.pagesizes import A4
+    import time
+    from reportlab.lib.pagesizes import A4, landscape
     from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image as ReportLabImage, PageBreak
     from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
     from reportlab.lib.units import cm
     from reportlab.lib import colors
+    from reportlab.pdfbase import pdfmetrics
+    from reportlab.pdfbase.ttfonts import TTFont
     import matplotlib.pyplot as plt
     import matplotlib
     matplotlib.use('Agg')
-    from pypdf import PdfMerger 
-    
-    from reportlab.pdfbase import pdfmetrics
-    from reportlab.pdfbase.ttfonts import TTFont
-    from reportlab.lib.fonts import addMapping
-
-    # Регистрируем шрифт с поддержкой кириллицы
-    try:
-        pdfmetrics.registerFont(TTFont('DejaVuSans', '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf'))
-        pdfmetrics.registerFont(TTFont('DejaVuSans-Bold', '/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf'))
-        default_font = 'DejaVuSans'
-    except:
-        default_font = 'Helvetica'
-    
-    # Добавьте эти две строки для поддержки кириллицы
-    plt.rcParams['font.family'] = 'sans-serif'
-    plt.rcParams['font.sans-serif'] = ['Arial', 'DejaVu Sans', 'Liberation Sans', 'Helvetica']
+    from pypdf import PdfMerger
     
     STATIC_DIR = "static"
     os.makedirs(STATIC_DIR, exist_ok=True)
+    
+    # Регистрируем шрифт для кириллицы
+    try:
+        pdfmetrics.registerFont(TTFont('DejaVuSans', '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf'))
+        default_font = 'DejaVuSans'
+    except:
+        default_font = 'Helvetica'
     
     def get_month_name(month_num):
         months = {
@@ -590,28 +583,34 @@ async def export_full_report(db: Session = Depends(get_db)):
             return None
     
     def create_bar_chart(labels, values, title, xlabel, ylabel, filename):
-        plt.figure(figsize=(10, 6))
+        plt.rcParams['font.family'] = 'sans-serif'
+        plt.rcParams['font.sans-serif'] = ['DejaVu Sans', 'Arial']
+        plt.figure(figsize=(12, 7))
         plt.bar(labels, values, color='steelblue')
-        plt.title(title, fontsize=14)
+        plt.title(title, fontsize=14, pad=20)
         plt.xlabel(xlabel)
         plt.ylabel(ylabel)
-        plt.xticks(rotation=45, ha='right')
+        plt.xticks(rotation=45, ha='right', fontsize=10)
         plt.tight_layout()
         plt.savefig(filename, dpi=150, bbox_inches='tight')
         plt.close()
     
     def create_pie_chart(labels, values, title, filename):
-        plt.figure(figsize=(8, 8))
+        plt.rcParams['font.family'] = 'sans-serif'
+        plt.rcParams['font.sans-serif'] = ['DejaVu Sans', 'Arial']
+        plt.figure(figsize=(10, 8))
         plt.pie(values, labels=labels, autopct='%1.1f%%')
-        plt.title(title, fontsize=14)
+        plt.title(title, fontsize=14, pad=20)
         plt.tight_layout()
         plt.savefig(filename, dpi=150, bbox_inches='tight')
         plt.close()
     
     def create_line_chart(labels, values, title, filename):
-        plt.figure(figsize=(12, 6))
+        plt.rcParams['font.family'] = 'sans-serif'
+        plt.rcParams['font.sans-serif'] = ['DejaVu Sans', 'Arial']
+        plt.figure(figsize=(14, 7))
         plt.plot(labels, values, marker='o', linewidth=2, markersize=6)
-        plt.title(title, fontsize=14)
+        plt.title(title, fontsize=14, pad=20)
         plt.xlabel('Месяц')
         plt.ylabel('Количество')
         plt.xticks(rotation=45, ha='right')
@@ -621,7 +620,9 @@ async def export_full_report(db: Session = Depends(get_db)):
         plt.close()
     
     def create_multi_bar_chart(labels, incident_counts, victim_counts, death_counts, filename):
-        plt.figure(figsize=(12, 6))
+        plt.rcParams['font.family'] = 'sans-serif'
+        plt.rcParams['font.sans-serif'] = ['DejaVu Sans', 'Arial']
+        plt.figure(figsize=(14, 7))
         x = range(len(labels))
         width = 0.25
         plt.bar([i - width for i in x], incident_counts, width, label='Инциденты', color='steelblue')
@@ -653,7 +654,22 @@ async def export_full_report(db: Session = Depends(get_db)):
             func.count(CriminalSituation.id).desc()
         ).first()
         
-        # Возрастные группы
+        top_crime_name = top_crime[0] if top_crime else "Нет данных"
+        top_crime_count = top_crime[1] if top_crime else 0
+        
+        top_incident = db.query(
+            MilitarySituation.incident_name,
+            func.count(MilitarySituation.id).label("count")
+        ).filter(
+            MilitarySituation.incident_name.isnot(None),
+            MilitarySituation.incident_name != ''
+        ).group_by(MilitarySituation.incident_name).order_by(
+            func.count(MilitarySituation.id).desc()
+        ).first()
+        
+        top_incident_name = top_incident[0] if top_incident else "Нет данных"
+        top_incident_count = top_incident[1] if top_incident else 0
+        
         victims_data = db.query(
             CriminalSituation.victim_birthday,
             CriminalSituation.crime_date
@@ -662,20 +678,20 @@ async def export_full_report(db: Session = Depends(get_db)):
             CriminalSituation.crime_date.isnot(None)
         ).all()
         
-        age_groups = {"1. 10-25 лет": 0, "2. 26-30 лет": 0, "3. 31-45 лет": 0, "4. 46-60 лет": 0, "5. 61+ лет": 0}
+        age_groups = {"10-25 лет": 0, "26-30 лет": 0, "31-45 лет": 0, "46-60 лет": 0, "61+ лет": 0}
         for birth_date, crime_date in victims_data:
             age = calculate_age(birth_date, crime_date)
             if age:
                 if 10 <= age <= 25:
-                    age_groups["1. 10-25 лет"] += 1
+                    age_groups["10-25 лет"] += 1
                 elif 26 <= age <= 30:
-                    age_groups["2. 26-30 лет"] += 1
+                    age_groups["26-30 лет"] += 1
                 elif 31 <= age <= 45:
-                    age_groups["3. 31-45 лет"] += 1
+                    age_groups["31-45 лет"] += 1
                 elif 46 <= age <= 60:
-                    age_groups["4. 46-60 лет"] += 1
+                    age_groups["46-60 лет"] += 1
                 elif age >= 61:
-                    age_groups["5. 61+ лет"] += 1
+                    age_groups["61+ лет"] += 1
         
         crime_stats = db.query(
             CriminalSituation.crime_category_name,
@@ -718,6 +734,18 @@ async def export_full_report(db: Session = Depends(get_db)):
         monthly_incident_counts = [m[1] for m in monthly_incidents]
         monthly_victim_counts = [m[2] if m[2] else 0 for m in monthly_incidents]
         monthly_death_counts = [m[3] if m[3] else 0 for m in monthly_incidents]
+        
+        gender_counts = {"Мужской": 0, "Женский": 0}
+        gender_stats_raw = db.query(
+            CriminalSituation.victim_gender,
+            func.count(CriminalSituation.id).label("count")
+        ).group_by(CriminalSituation.victim_gender).all()
+        
+        for gender, count in gender_stats_raw:
+            if gender == 0:
+                gender_counts["Мужской"] = count
+            elif gender == 1:
+                gender_counts["Женский"] = count
         
         temp_charts = []
         
@@ -753,12 +781,13 @@ async def export_full_report(db: Session = Depends(get_db)):
         
         # Создаём PDF
         foot_path = os.path.join(STATIC_DIR, "report_foot.pdf")
-        doc = SimpleDocTemplate(foot_path, pagesize=A4, topMargin=1.5*cm, bottomMargin=1.5*cm)
+        doc = SimpleDocTemplate(foot_path, pagesize=A4, topMargin=2*cm, bottomMargin=2*cm)
         styles = getSampleStyleSheet()
         story = []
         
-        title_style = ParagraphStyle('CustomTitle', parent=styles['Heading1'], fontSize=20, alignment=1, spaceAfter=20)
-        normal_style = ParagraphStyle('CustomNormal', parent=styles['Normal'], fontSize=10, spaceAfter=5)
+        title_style = ParagraphStyle('CustomTitle', parent=styles['Heading1'], fontSize=22, alignment=1, spaceAfter=30, fontName=default_font)
+        heading_style = ParagraphStyle('CustomHeading', parent=styles['Heading2'], fontSize=16, spaceAfter=12, spaceBefore=20, fontName=default_font)
+        normal_style = ParagraphStyle('CustomNormal', parent=styles['Normal'], fontSize=11, spaceAfter=8, fontName=default_font)
         
         story.append(Paragraph("Сводка по криминальной обстановке", title_style))
         story.append(Spacer(1, 10))
@@ -767,17 +796,21 @@ async def export_full_report(db: Session = Depends(get_db)):
         story.append(Paragraph(f"Общий ущерб: {total_damage/1000000:.2f} млн. руб.", normal_style))
         story.append(Paragraph(f"Всего военных инцидентов: {total_incidents}", normal_style))
         story.append(Paragraph(f"Всего пострадавших: {total_victims}", normal_style))
-        story.append(Spacer(1, 10))
+        story.append(Spacer(1, 15))
         
-        if top_crime:
-            story.append(Paragraph(f"Основной тип преступлений: {top_crime[0]} ({top_crime[1]} преступлений)", normal_style))
+        story.append(Paragraph(f"Основной тип преступлений: {top_crime_name} ({top_crime_count})", normal_style))
+        story.append(Paragraph(f"Основной вид инцидентов: {top_incident_name} ({top_incident_count})", normal_style))
+        story.append(Spacer(1, 15))
+        
+        story.append(Paragraph("Распределение по полу:", heading_style))
+        gender_text = f"Мужчины: {gender_counts['Мужской']}, Женщины: {gender_counts['Женский']}"
+        story.append(Paragraph(gender_text, normal_style))
         story.append(Spacer(1, 15))
         
         for i, chart_path in enumerate(temp_charts):
             if os.path.exists(chart_path):
-                if i > 0:
-                    story.append(PageBreak())
-                img = ReportLabImage(chart_path, width=16*cm, height=12*cm)
+                story.append(PageBreak())
+                img = ReportLabImage(chart_path, width=17*cm, height=12*cm)
                 story.append(img)
         
         doc.build(story)
@@ -786,7 +819,6 @@ async def export_full_report(db: Session = Depends(get_db)):
             if os.path.exists(chart_path):
                 os.remove(chart_path)
         
-        # Объединяем с report_head.pdf
         head_path = os.path.join(STATIC_DIR, "report_head.pdf")
         if not os.path.exists(head_path):
             return Response(
@@ -802,48 +834,96 @@ async def export_full_report(db: Session = Depends(get_db)):
         merger.write(full_path)
         merger.close()
         
+        # Отдаём файл на скачивание
         with open(full_path, "rb") as f:
             content = f.read()
         
-        return Response(
-            content=content,
-            media_type="application/pdf",
-            headers={"Content-Disposition": "attachment; filename=report_full.pdf"}
-        )
+        # Отправляем HTML с сообщением и автоматическим скачиванием
+        html_response = f"""
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <meta charset="UTF-8">
+            <title>Формирование отчёта</title>
+            <style>
+                body {{
+                    font-family: Arial, sans-serif;
+                    display: flex;
+                    justify-content: center;
+                    align-items: center;
+                    height: 100vh;
+                    margin: 0;
+                    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                    color: white;
+                }}
+                .message {{
+                    text-align: center;
+                    padding: 40px;
+                    background: rgba(255,255,255,0.1);
+                    border-radius: 20px;
+                    backdrop-filter: blur(10px);
+                }}
+                .success {{
+                    font-size: 48px;
+                    margin-bottom: 20px;
+                }}
+                .download-link {{
+                    display: inline-block;
+                    margin-top: 20px;
+                    padding: 12px 30px;
+                    background: #28a745;
+                    color: white;
+                    text-decoration: none;
+                    border-radius: 30px;
+                    font-size: 18px;
+                    transition: transform 0.3s;
+                }}
+                .download-link:hover {{
+                    transform: scale(1.05);
+                    background: #218838;
+                    color: white;
+                }}
+            </style>
+        </head>
+        <body>
+            <div class="message">
+                <div class="success">✅ Отчёт успешно сформирован!</div>
+                <p>Файл report_full.pdf готов к скачиванию</p>
+                <a href="/static/report_full.pdf" class="download-link">📥 Скачать отчёт (PDF)</a>
+                <p style="margin-top: 20px; font-size: 12px; opacity: 0.8;">Файл также сохранён в папке static сервера</p>
+                <p><a href="/" style="color: white;">← Вернуться на главную</a></p>
+            </div>
+        </body>
+        </html>
+        """
+        return HTMLResponse(content=html_response)
         
     except Exception as e:
         return Response(content=f"Ошибка: {str(e)}", status_code=500, media_type="text/plain")
 
+
 @router.get("/export-short-report")
 async def export_short_report(db: Session = Depends(get_db)):
-    from fastapi.responses import Response
+    from fastapi.responses import Response, HTMLResponse
     import os
     from reportlab.lib.pagesizes import A4
     from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Image as ReportLabImage, PageBreak
     from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
     from reportlab.lib.units import cm
+    from reportlab.pdfbase import pdfmetrics
+    from reportlab.pdfbase.ttfonts import TTFont
     import matplotlib.pyplot as plt
     import matplotlib
     matplotlib.use('Agg')
     
-    from reportlab.pdfbase import pdfmetrics
-    from reportlab.pdfbase.ttfonts import TTFont
-    from reportlab.lib.fonts import addMapping
-
-    # Регистрируем шрифт с поддержкой кириллицы
+    STATIC_DIR = "static"
+    os.makedirs(STATIC_DIR, exist_ok=True)
+    
     try:
         pdfmetrics.registerFont(TTFont('DejaVuSans', '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf'))
-        pdfmetrics.registerFont(TTFont('DejaVuSans-Bold', '/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf'))
         default_font = 'DejaVuSans'
     except:
         default_font = 'Helvetica'
-    
-    # Добавьте эти две строки для поддержки кириллицы
-    plt.rcParams['font.family'] = 'sans-serif'
-    plt.rcParams['font.sans-serif'] = ['Arial', 'DejaVu Sans', 'Liberation Sans', 'Helvetica']
-    
-    STATIC_DIR = "static"
-    os.makedirs(STATIC_DIR, exist_ok=True)
     
     def get_month_name(month_num):
         months = {
@@ -865,28 +945,34 @@ async def export_short_report(db: Session = Depends(get_db)):
             return None
     
     def create_bar_chart(labels, values, title, xlabel, ylabel, filename):
-        plt.figure(figsize=(10, 6))
+        plt.rcParams['font.family'] = 'sans-serif'
+        plt.rcParams['font.sans-serif'] = ['DejaVu Sans', 'Arial']
+        plt.figure(figsize=(12, 7))
         plt.bar(labels, values, color='steelblue')
-        plt.title(title, fontsize=14)
+        plt.title(title, fontsize=14, pad=20)
         plt.xlabel(xlabel)
         plt.ylabel(ylabel)
-        plt.xticks(rotation=45, ha='right')
+        plt.xticks(rotation=45, ha='right', fontsize=10)
         plt.tight_layout()
         plt.savefig(filename, dpi=150, bbox_inches='tight')
         plt.close()
     
     def create_pie_chart(labels, values, title, filename):
-        plt.figure(figsize=(8, 8))
+        plt.rcParams['font.family'] = 'sans-serif'
+        plt.rcParams['font.sans-serif'] = ['DejaVu Sans', 'Arial']
+        plt.figure(figsize=(10, 8))
         plt.pie(values, labels=labels, autopct='%1.1f%%')
-        plt.title(title, fontsize=14)
+        plt.title(title, fontsize=14, pad=20)
         plt.tight_layout()
         plt.savefig(filename, dpi=150, bbox_inches='tight')
         plt.close()
     
     def create_line_chart(labels, values, title, filename):
-        plt.figure(figsize=(12, 6))
+        plt.rcParams['font.family'] = 'sans-serif'
+        plt.rcParams['font.sans-serif'] = ['DejaVu Sans', 'Arial']
+        plt.figure(figsize=(14, 7))
         plt.plot(labels, values, marker='o', linewidth=2, markersize=6)
-        plt.title(title, fontsize=14)
+        plt.title(title, fontsize=14, pad=20)
         plt.xlabel('Месяц')
         plt.ylabel('Количество')
         plt.xticks(rotation=45, ha='right')
@@ -896,7 +982,9 @@ async def export_short_report(db: Session = Depends(get_db)):
         plt.close()
     
     def create_multi_bar_chart(labels, incident_counts, victim_counts, death_counts, filename):
-        plt.figure(figsize=(12, 6))
+        plt.rcParams['font.family'] = 'sans-serif'
+        plt.rcParams['font.sans-serif'] = ['DejaVu Sans', 'Arial']
+        plt.figure(figsize=(14, 7))
         x = range(len(labels))
         width = 0.25
         plt.bar([i - width for i in x], incident_counts, width, label='Инциденты', color='steelblue')
@@ -912,7 +1000,7 @@ async def export_short_report(db: Session = Depends(get_db)):
         plt.close()
     
     try:
-        # Собираем данные
+        # Собираем данные (как в export_full_report)
         total_crimes = db.query(func.count(CriminalSituation.id)).scalar() or 0
         total_damage = db.query(func.sum(CriminalSituation.sum_damage)).scalar() or 0
         total_incidents = db.query(func.count(MilitarySituation.id)).scalar() or 0
@@ -928,6 +1016,22 @@ async def export_short_report(db: Session = Depends(get_db)):
             func.count(CriminalSituation.id).desc()
         ).first()
         
+        top_crime_name = top_crime[0] if top_crime else "Нет данных"
+        top_crime_count = top_crime[1] if top_crime else 0
+        
+        top_incident = db.query(
+            MilitarySituation.incident_name,
+            func.count(MilitarySituation.id).label("count")
+        ).filter(
+            MilitarySituation.incident_name.isnot(None),
+            MilitarySituation.incident_name != ''
+        ).group_by(MilitarySituation.incident_name).order_by(
+            func.count(MilitarySituation.id).desc()
+        ).first()
+        
+        top_incident_name = top_incident[0] if top_incident else "Нет данных"
+        top_incident_count = top_incident[1] if top_incident else 0
+        
         victims_data = db.query(
             CriminalSituation.victim_birthday,
             CriminalSituation.crime_date
@@ -936,20 +1040,20 @@ async def export_short_report(db: Session = Depends(get_db)):
             CriminalSituation.crime_date.isnot(None)
         ).all()
         
-        age_groups = {"1. 10-25 лет": 0, "2. 26-30 лет": 0, "3. 31-45 лет": 0, "4. 46-60 лет": 0, "5. 61+ лет": 0}
+        age_groups = {"10-25 лет": 0, "26-30 лет": 0, "31-45 лет": 0, "46-60 лет": 0, "61+ лет": 0}
         for birth_date, crime_date in victims_data:
             age = calculate_age(birth_date, crime_date)
             if age:
                 if 10 <= age <= 25:
-                    age_groups["1. 10-25 лет"] += 1
+                    age_groups["10-25 лет"] += 1
                 elif 26 <= age <= 30:
-                    age_groups["2. 26-30 лет"] += 1
+                    age_groups["26-30 лет"] += 1
                 elif 31 <= age <= 45:
-                    age_groups["3. 31-45 лет"] += 1
+                    age_groups["31-45 лет"] += 1
                 elif 46 <= age <= 60:
-                    age_groups["4. 46-60 лет"] += 1
+                    age_groups["46-60 лет"] += 1
                 elif age >= 61:
-                    age_groups["5. 61+ лет"] += 1
+                    age_groups["61+ лет"] += 1
         
         crime_stats = db.query(
             CriminalSituation.crime_category_name,
@@ -993,6 +1097,18 @@ async def export_short_report(db: Session = Depends(get_db)):
         monthly_victim_counts = [m[2] if m[2] else 0 for m in monthly_incidents]
         monthly_death_counts = [m[3] if m[3] else 0 for m in monthly_incidents]
         
+        gender_counts = {"Мужской": 0, "Женский": 0}
+        gender_stats_raw = db.query(
+            CriminalSituation.victim_gender,
+            func.count(CriminalSituation.id).label("count")
+        ).group_by(CriminalSituation.victim_gender).all()
+        
+        for gender, count in gender_stats_raw:
+            if gender == 0:
+                gender_counts["Мужской"] = count
+            elif gender == 1:
+                gender_counts["Женский"] = count
+        
         temp_charts = []
         
         if crime_stats:
@@ -1027,12 +1143,13 @@ async def export_short_report(db: Session = Depends(get_db)):
         
         # Создаём PDF
         short_path = os.path.join(STATIC_DIR, "report_short.pdf")
-        doc = SimpleDocTemplate(short_path, pagesize=A4, topMargin=1.5*cm, bottomMargin=1.5*cm)
+        doc = SimpleDocTemplate(short_path, pagesize=A4, topMargin=2*cm, bottomMargin=2*cm)
         styles = getSampleStyleSheet()
         story = []
         
-        title_style = ParagraphStyle('CustomTitle', parent=styles['Heading1'], fontSize=20, alignment=1, spaceAfter=20)
-        normal_style = ParagraphStyle('CustomNormal', parent=styles['Normal'], fontSize=10, spaceAfter=5)
+        title_style = ParagraphStyle('CustomTitle', parent=styles['Heading1'], fontSize=22, alignment=1, spaceAfter=30, fontName=default_font)
+        heading_style = ParagraphStyle('CustomHeading', parent=styles['Heading2'], fontSize=16, spaceAfter=12, spaceBefore=20, fontName=default_font)
+        normal_style = ParagraphStyle('CustomNormal', parent=styles['Normal'], fontSize=11, spaceAfter=8, fontName=default_font)
         
         story.append(Paragraph("Сводка по криминальной обстановке", title_style))
         story.append(Spacer(1, 10))
@@ -1041,17 +1158,21 @@ async def export_short_report(db: Session = Depends(get_db)):
         story.append(Paragraph(f"Общий ущерб: {total_damage/1000000:.2f} млн. руб.", normal_style))
         story.append(Paragraph(f"Всего военных инцидентов: {total_incidents}", normal_style))
         story.append(Paragraph(f"Всего пострадавших: {total_victims}", normal_style))
-        story.append(Spacer(1, 10))
+        story.append(Spacer(1, 15))
         
-        if top_crime:
-            story.append(Paragraph(f"Основной тип преступлений: {top_crime[0]} ({top_crime[1]} преступлений)", normal_style))
+        story.append(Paragraph(f"Основной тип преступлений: {top_crime_name} ({top_crime_count})", normal_style))
+        story.append(Paragraph(f"Основной вид инцидентов: {top_incident_name} ({top_incident_count})", normal_style))
+        story.append(Spacer(1, 15))
+        
+        story.append(Paragraph("Распределение по полу:", heading_style))
+        gender_text = f"Мужчины: {gender_counts['Мужской']}, Женщины: {gender_counts['Женский']}"
+        story.append(Paragraph(gender_text, normal_style))
         story.append(Spacer(1, 15))
         
         for i, chart_path in enumerate(temp_charts):
             if os.path.exists(chart_path):
-                if i > 0:
-                    story.append(PageBreak())
-                img = ReportLabImage(chart_path, width=16*cm, height=12*cm)
+                story.append(PageBreak())
+                img = ReportLabImage(chart_path, width=17*cm, height=12*cm)
                 story.append(img)
         
         doc.build(story)
@@ -1060,14 +1181,64 @@ async def export_short_report(db: Session = Depends(get_db)):
             if os.path.exists(chart_path):
                 os.remove(chart_path)
         
-        with open(short_path, "rb") as f:
-            content = f.read()
-        
-        return Response(
-            content=content,
-            media_type="application/pdf",
-            headers={"Content-Disposition": "attachment; filename=report_short.pdf"}
-        )
+        html_response = f"""
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <meta charset="UTF-8">
+            <title>Формирование отчёта</title>
+            <style>
+                body {{
+                    font-family: Arial, sans-serif;
+                    display: flex;
+                    justify-content: center;
+                    align-items: center;
+                    height: 100vh;
+                    margin: 0;
+                    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                    color: white;
+                }}
+                .message {{
+                    text-align: center;
+                    padding: 40px;
+                    background: rgba(255,255,255,0.1);
+                    border-radius: 20px;
+                    backdrop-filter: blur(10px);
+                }}
+                .success {{
+                    font-size: 48px;
+                    margin-bottom: 20px;
+                }}
+                .download-link {{
+                    display: inline-block;
+                    margin-top: 20px;
+                    padding: 12px 30px;
+                    background: #28a745;
+                    color: white;
+                    text-decoration: none;
+                    border-radius: 30px;
+                    font-size: 18px;
+                    transition: transform 0.3s;
+                }}
+                .download-link:hover {{
+                    transform: scale(1.05);
+                    background: #218838;
+                    color: white;
+                }}
+            </style>
+        </head>
+        <body>
+            <div class="message">
+                <div class="success">✅ Краткий отчёт успешно сформирован!</div>
+                <p>Файл report_short.pdf готов к скачиванию</p>
+                <a href="/static/report_short.pdf" class="download-link">📥 Скачать отчёт (PDF)</a>
+                <p style="margin-top: 20px; font-size: 12px; opacity: 0.8;">Файл также сохранён в папке static сервера</p>
+                <p><a href="/" style="color: white;">← Вернуться на главную</a></p>
+            </div>
+        </body>
+        </html>
+        """
+        return HTMLResponse(content=html_response)
         
     except Exception as e:
         return Response(content=f"Ошибка: {str(e)}", status_code=500, media_type="text/plain")
