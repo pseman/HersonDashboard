@@ -235,6 +235,9 @@ async def dashboard(request: Request, db: Session = Depends(get_db)):
                         <a class="nav-link active" href="/">📈 Главная</a>
                         <a class="nav-link" href="/criminal">🔍 Криминальная обстановка</a>
                         <a class="nav-link" href="/military">⚔️ Военные инциденты</a>
+                        <hr>
+                        <a class="nav-link" href="/export-full-report">📄 Полный отчёт</a>
+                        <a class="nav-link" href="/export-short-report">📄 Краткий отчёт</a>
                     </nav>
                 </div>
             </div>
@@ -529,3 +532,542 @@ async def dashboard(request: Request, db: Session = Depends(get_db)):
 </html>
     """
     return HTMLResponse(content=html)
+
+
+# ========== НОВЫЕ МАРШРУТЫ ДЛЯ ЭКСПОРТА ОТЧЁТОВ ==========
+
+@router.get("/export-full-report")
+async def export_full_report(db: Session = Depends(get_db)):
+    from fastapi.responses import Response
+    import os
+    from io import BytesIO
+    from reportlab.lib.pagesizes import A4
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image as ReportLabImage, PageBreak
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib.units import cm
+    from reportlab.lib import colors
+    import matplotlib.pyplot as plt
+    import matplotlib
+    matplotlib.use('Agg')
+    from pypdf import PdfMerger 
+    
+    from reportlab.pdfbase import pdfmetrics
+    from reportlab.pdfbase.ttfonts import TTFont
+    from reportlab.lib.fonts import addMapping
+
+    # Регистрируем шрифт с поддержкой кириллицы
+    try:
+        pdfmetrics.registerFont(TTFont('DejaVuSans', '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf'))
+        pdfmetrics.registerFont(TTFont('DejaVuSans-Bold', '/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf'))
+        default_font = 'DejaVuSans'
+    except:
+        default_font = 'Helvetica'
+    
+    # Добавьте эти две строки для поддержки кириллицы
+    plt.rcParams['font.family'] = 'sans-serif'
+    plt.rcParams['font.sans-serif'] = ['Arial', 'DejaVu Sans', 'Liberation Sans', 'Helvetica']
+    
+    STATIC_DIR = "static"
+    os.makedirs(STATIC_DIR, exist_ok=True)
+    
+    def get_month_name(month_num):
+        months = {
+            '01': 'январь', '02': 'февраль', '03': 'март', '04': 'апрель',
+            '05': 'май', '06': 'июнь', '07': 'июль', '08': 'август',
+            '09': 'сентябрь', '10': 'октябрь', '11': 'ноябрь', '12': 'декабрь'
+        }
+        return months.get(month_num, month_num)
+    
+    def calculate_age(birth_date, crime_date):
+        if not birth_date or not crime_date:
+            return None
+        try:
+            age = crime_date.year - birth_date.year
+            if (crime_date.month, crime_date.day) < (birth_date.month, birth_date.day):
+                age -= 1
+            return age if 0 <= age <= 120 else None
+        except:
+            return None
+    
+    def create_bar_chart(labels, values, title, xlabel, ylabel, filename):
+        plt.figure(figsize=(10, 6))
+        plt.bar(labels, values, color='steelblue')
+        plt.title(title, fontsize=14)
+        plt.xlabel(xlabel)
+        plt.ylabel(ylabel)
+        plt.xticks(rotation=45, ha='right')
+        plt.tight_layout()
+        plt.savefig(filename, dpi=150, bbox_inches='tight')
+        plt.close()
+    
+    def create_pie_chart(labels, values, title, filename):
+        plt.figure(figsize=(8, 8))
+        plt.pie(values, labels=labels, autopct='%1.1f%%')
+        plt.title(title, fontsize=14)
+        plt.tight_layout()
+        plt.savefig(filename, dpi=150, bbox_inches='tight')
+        plt.close()
+    
+    def create_line_chart(labels, values, title, filename):
+        plt.figure(figsize=(12, 6))
+        plt.plot(labels, values, marker='o', linewidth=2, markersize=6)
+        plt.title(title, fontsize=14)
+        plt.xlabel('Месяц')
+        plt.ylabel('Количество')
+        plt.xticks(rotation=45, ha='right')
+        plt.grid(True, alpha=0.3)
+        plt.tight_layout()
+        plt.savefig(filename, dpi=150, bbox_inches='tight')
+        plt.close()
+    
+    def create_multi_bar_chart(labels, incident_counts, victim_counts, death_counts, filename):
+        plt.figure(figsize=(12, 6))
+        x = range(len(labels))
+        width = 0.25
+        plt.bar([i - width for i in x], incident_counts, width, label='Инциденты', color='steelblue')
+        plt.bar(x, victim_counts, width, label='Пострадавшие', color='salmon')
+        plt.bar([i + width for i in x], death_counts, width, label='Погибшие', color='darkred')
+        plt.xlabel('Месяц')
+        plt.ylabel('Количество')
+        plt.title('Динамика военных инцидентов по месяцам')
+        plt.xticks(x, labels, rotation=45, ha='right')
+        plt.legend()
+        plt.tight_layout()
+        plt.savefig(filename, dpi=150, bbox_inches='tight')
+        plt.close()
+    
+    try:
+        # Собираем данные
+        total_crimes = db.query(func.count(CriminalSituation.id)).scalar() or 0
+        total_damage = db.query(func.sum(CriminalSituation.sum_damage)).scalar() or 0
+        total_incidents = db.query(func.count(MilitarySituation.id)).scalar() or 0
+        total_victims = db.query(func.sum(MilitarySituation.victim_count)).scalar() or 0
+        
+        top_crime = db.query(
+            CriminalSituation.crime_category_name,
+            func.count(CriminalSituation.id).label("count")
+        ).filter(
+            CriminalSituation.crime_category_name.isnot(None),
+            CriminalSituation.crime_category_name != ''
+        ).group_by(CriminalSituation.crime_category_name).order_by(
+            func.count(CriminalSituation.id).desc()
+        ).first()
+        
+        # Возрастные группы
+        victims_data = db.query(
+            CriminalSituation.victim_birthday,
+            CriminalSituation.crime_date
+        ).filter(
+            CriminalSituation.victim_birthday.isnot(None),
+            CriminalSituation.crime_date.isnot(None)
+        ).all()
+        
+        age_groups = {"1. 10-25 лет": 0, "2. 26-30 лет": 0, "3. 31-45 лет": 0, "4. 46-60 лет": 0, "5. 61+ лет": 0}
+        for birth_date, crime_date in victims_data:
+            age = calculate_age(birth_date, crime_date)
+            if age:
+                if 10 <= age <= 25:
+                    age_groups["1. 10-25 лет"] += 1
+                elif 26 <= age <= 30:
+                    age_groups["2. 26-30 лет"] += 1
+                elif 31 <= age <= 45:
+                    age_groups["3. 31-45 лет"] += 1
+                elif 46 <= age <= 60:
+                    age_groups["4. 46-60 лет"] += 1
+                elif age >= 61:
+                    age_groups["5. 61+ лет"] += 1
+        
+        crime_stats = db.query(
+            CriminalSituation.crime_category_name,
+            func.count(CriminalSituation.id).label("count")
+        ).filter(
+            CriminalSituation.crime_category_name.isnot(None),
+            CriminalSituation.crime_category_name != ''
+        ).group_by(CriminalSituation.crime_category_name).all()
+        
+        omvd_stats = db.query(
+            CriminalSituation.omvd_name,
+            func.count(CriminalSituation.id).label("count")
+        ).filter(
+            CriminalSituation.omvd_name.isnot(None),
+            CriminalSituation.omvd_name != ''
+        ).group_by(CriminalSituation.omvd_name).order_by(
+            func.count(CriminalSituation.id).desc()
+        ).limit(5).all()
+        
+        monthly_crimes = db.query(
+            func.strftime('%Y-%m', CriminalSituation.crime_date).label("month"),
+            func.count(CriminalSituation.id).label("count")
+        ).filter(
+            CriminalSituation.crime_date.isnot(None)
+        ).group_by("month").order_by("month").limit(12).all()
+        
+        monthly_crime_labels = [get_month_name(m[0].split('-')[1]) for m in monthly_crimes]
+        monthly_crime_values = [m[1] for m in monthly_crimes]
+        
+        monthly_incidents = db.query(
+            func.strftime('%Y-%m', MilitarySituation.incident_date).label("month"),
+            func.count(MilitarySituation.id).label("incident_count"),
+            func.sum(MilitarySituation.victim_count).label("total_victims"),
+            func.sum(MilitarySituation.victim_death).label("total_deaths")
+        ).filter(
+            MilitarySituation.incident_date.isnot(None)
+        ).group_by("month").order_by("month").limit(12).all()
+        
+        monthly_incident_labels = [get_month_name(m[0].split('-')[1]) for m in monthly_incidents]
+        monthly_incident_counts = [m[1] for m in monthly_incidents]
+        monthly_victim_counts = [m[2] if m[2] else 0 for m in monthly_incidents]
+        monthly_death_counts = [m[3] if m[3] else 0 for m in monthly_incidents]
+        
+        temp_charts = []
+        
+        if crime_stats:
+            chart1_path = os.path.join(STATIC_DIR, "temp_chart1.png")
+            create_bar_chart([c[0] for c in crime_stats], [c[1] for c in crime_stats], 
+                            "Преступления по категориям", "Категория", "Количество", chart1_path)
+            temp_charts.append(chart1_path)
+        
+        if any(age_groups.values()):
+            chart2_path = os.path.join(STATIC_DIR, "temp_chart2.png")
+            create_bar_chart(list(age_groups.keys()), list(age_groups.values()), 
+                            "Уязвимые группы по возрасту", "Возрастная группа", "Количество пострадавших", chart2_path)
+            temp_charts.append(chart2_path)
+        
+        if omvd_stats:
+            chart3_path = os.path.join(STATIC_DIR, "temp_chart3.png")
+            create_pie_chart([o[0] for o in omvd_stats], [o[1] for o in omvd_stats], 
+                            "Территориальное распределение (Топ-5)", chart3_path)
+            temp_charts.append(chart3_path)
+        
+        if monthly_crime_labels:
+            chart4_path = os.path.join(STATIC_DIR, "temp_chart4.png")
+            create_line_chart(monthly_crime_labels, monthly_crime_values, 
+                             "Динамика преступлений по месяцам", chart4_path)
+            temp_charts.append(chart4_path)
+        
+        if monthly_incident_labels:
+            chart5_path = os.path.join(STATIC_DIR, "temp_chart5.png")
+            create_multi_bar_chart(monthly_incident_labels, monthly_incident_counts, 
+                                  monthly_victim_counts, monthly_death_counts, chart5_path)
+            temp_charts.append(chart5_path)
+        
+        # Создаём PDF
+        foot_path = os.path.join(STATIC_DIR, "report_foot.pdf")
+        doc = SimpleDocTemplate(foot_path, pagesize=A4, topMargin=1.5*cm, bottomMargin=1.5*cm)
+        styles = getSampleStyleSheet()
+        story = []
+        
+        title_style = ParagraphStyle('CustomTitle', parent=styles['Heading1'], fontSize=20, alignment=1, spaceAfter=20)
+        normal_style = ParagraphStyle('CustomNormal', parent=styles['Normal'], fontSize=10, spaceAfter=5)
+        
+        story.append(Paragraph("Сводка по криминальной обстановке", title_style))
+        story.append(Spacer(1, 10))
+        
+        story.append(Paragraph(f"Всего преступлений: {total_crimes}", normal_style))
+        story.append(Paragraph(f"Общий ущерб: {total_damage/1000000:.2f} млн. руб.", normal_style))
+        story.append(Paragraph(f"Всего военных инцидентов: {total_incidents}", normal_style))
+        story.append(Paragraph(f"Всего пострадавших: {total_victims}", normal_style))
+        story.append(Spacer(1, 10))
+        
+        if top_crime:
+            story.append(Paragraph(f"Основной тип преступлений: {top_crime[0]} ({top_crime[1]} преступлений)", normal_style))
+        story.append(Spacer(1, 15))
+        
+        for i, chart_path in enumerate(temp_charts):
+            if os.path.exists(chart_path):
+                if i > 0:
+                    story.append(PageBreak())
+                img = ReportLabImage(chart_path, width=16*cm, height=12*cm)
+                story.append(img)
+        
+        doc.build(story)
+        
+        for chart_path in temp_charts:
+            if os.path.exists(chart_path):
+                os.remove(chart_path)
+        
+        # Объединяем с report_head.pdf
+        head_path = os.path.join(STATIC_DIR, "report_head.pdf")
+        if not os.path.exists(head_path):
+            return Response(
+                content="Файл report_head.pdf не найден в папке static",
+                status_code=404,
+                media_type="text/plain"
+            )
+        
+        full_path = os.path.join(STATIC_DIR, "report_full.pdf")
+        merger = PdfMerger()
+        merger.append(head_path)
+        merger.append(foot_path)
+        merger.write(full_path)
+        merger.close()
+        
+        with open(full_path, "rb") as f:
+            content = f.read()
+        
+        return Response(
+            content=content,
+            media_type="application/pdf",
+            headers={"Content-Disposition": "attachment; filename=report_full.pdf"}
+        )
+        
+    except Exception as e:
+        return Response(content=f"Ошибка: {str(e)}", status_code=500, media_type="text/plain")
+
+@router.get("/export-short-report")
+async def export_short_report(db: Session = Depends(get_db)):
+    from fastapi.responses import Response
+    import os
+    from reportlab.lib.pagesizes import A4
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Image as ReportLabImage, PageBreak
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib.units import cm
+    import matplotlib.pyplot as plt
+    import matplotlib
+    matplotlib.use('Agg')
+    
+    from reportlab.pdfbase import pdfmetrics
+    from reportlab.pdfbase.ttfonts import TTFont
+    from reportlab.lib.fonts import addMapping
+
+    # Регистрируем шрифт с поддержкой кириллицы
+    try:
+        pdfmetrics.registerFont(TTFont('DejaVuSans', '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf'))
+        pdfmetrics.registerFont(TTFont('DejaVuSans-Bold', '/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf'))
+        default_font = 'DejaVuSans'
+    except:
+        default_font = 'Helvetica'
+    
+    # Добавьте эти две строки для поддержки кириллицы
+    plt.rcParams['font.family'] = 'sans-serif'
+    plt.rcParams['font.sans-serif'] = ['Arial', 'DejaVu Sans', 'Liberation Sans', 'Helvetica']
+    
+    STATIC_DIR = "static"
+    os.makedirs(STATIC_DIR, exist_ok=True)
+    
+    def get_month_name(month_num):
+        months = {
+            '01': 'январь', '02': 'февраль', '03': 'март', '04': 'апрель',
+            '05': 'май', '06': 'июнь', '07': 'июль', '08': 'август',
+            '09': 'сентябрь', '10': 'октябрь', '11': 'ноябрь', '12': 'декабрь'
+        }
+        return months.get(month_num, month_num)
+    
+    def calculate_age(birth_date, crime_date):
+        if not birth_date or not crime_date:
+            return None
+        try:
+            age = crime_date.year - birth_date.year
+            if (crime_date.month, crime_date.day) < (birth_date.month, birth_date.day):
+                age -= 1
+            return age if 0 <= age <= 120 else None
+        except:
+            return None
+    
+    def create_bar_chart(labels, values, title, xlabel, ylabel, filename):
+        plt.figure(figsize=(10, 6))
+        plt.bar(labels, values, color='steelblue')
+        plt.title(title, fontsize=14)
+        plt.xlabel(xlabel)
+        plt.ylabel(ylabel)
+        plt.xticks(rotation=45, ha='right')
+        plt.tight_layout()
+        plt.savefig(filename, dpi=150, bbox_inches='tight')
+        plt.close()
+    
+    def create_pie_chart(labels, values, title, filename):
+        plt.figure(figsize=(8, 8))
+        plt.pie(values, labels=labels, autopct='%1.1f%%')
+        plt.title(title, fontsize=14)
+        plt.tight_layout()
+        plt.savefig(filename, dpi=150, bbox_inches='tight')
+        plt.close()
+    
+    def create_line_chart(labels, values, title, filename):
+        plt.figure(figsize=(12, 6))
+        plt.plot(labels, values, marker='o', linewidth=2, markersize=6)
+        plt.title(title, fontsize=14)
+        plt.xlabel('Месяц')
+        plt.ylabel('Количество')
+        plt.xticks(rotation=45, ha='right')
+        plt.grid(True, alpha=0.3)
+        plt.tight_layout()
+        plt.savefig(filename, dpi=150, bbox_inches='tight')
+        plt.close()
+    
+    def create_multi_bar_chart(labels, incident_counts, victim_counts, death_counts, filename):
+        plt.figure(figsize=(12, 6))
+        x = range(len(labels))
+        width = 0.25
+        plt.bar([i - width for i in x], incident_counts, width, label='Инциденты', color='steelblue')
+        plt.bar(x, victim_counts, width, label='Пострадавшие', color='salmon')
+        plt.bar([i + width for i in x], death_counts, width, label='Погибшие', color='darkred')
+        plt.xlabel('Месяц')
+        plt.ylabel('Количество')
+        plt.title('Динамика военных инцидентов по месяцам')
+        plt.xticks(x, labels, rotation=45, ha='right')
+        plt.legend()
+        plt.tight_layout()
+        plt.savefig(filename, dpi=150, bbox_inches='tight')
+        plt.close()
+    
+    try:
+        # Собираем данные
+        total_crimes = db.query(func.count(CriminalSituation.id)).scalar() or 0
+        total_damage = db.query(func.sum(CriminalSituation.sum_damage)).scalar() or 0
+        total_incidents = db.query(func.count(MilitarySituation.id)).scalar() or 0
+        total_victims = db.query(func.sum(MilitarySituation.victim_count)).scalar() or 0
+        
+        top_crime = db.query(
+            CriminalSituation.crime_category_name,
+            func.count(CriminalSituation.id).label("count")
+        ).filter(
+            CriminalSituation.crime_category_name.isnot(None),
+            CriminalSituation.crime_category_name != ''
+        ).group_by(CriminalSituation.crime_category_name).order_by(
+            func.count(CriminalSituation.id).desc()
+        ).first()
+        
+        victims_data = db.query(
+            CriminalSituation.victim_birthday,
+            CriminalSituation.crime_date
+        ).filter(
+            CriminalSituation.victim_birthday.isnot(None),
+            CriminalSituation.crime_date.isnot(None)
+        ).all()
+        
+        age_groups = {"1. 10-25 лет": 0, "2. 26-30 лет": 0, "3. 31-45 лет": 0, "4. 46-60 лет": 0, "5. 61+ лет": 0}
+        for birth_date, crime_date in victims_data:
+            age = calculate_age(birth_date, crime_date)
+            if age:
+                if 10 <= age <= 25:
+                    age_groups["1. 10-25 лет"] += 1
+                elif 26 <= age <= 30:
+                    age_groups["2. 26-30 лет"] += 1
+                elif 31 <= age <= 45:
+                    age_groups["3. 31-45 лет"] += 1
+                elif 46 <= age <= 60:
+                    age_groups["4. 46-60 лет"] += 1
+                elif age >= 61:
+                    age_groups["5. 61+ лет"] += 1
+        
+        crime_stats = db.query(
+            CriminalSituation.crime_category_name,
+            func.count(CriminalSituation.id).label("count")
+        ).filter(
+            CriminalSituation.crime_category_name.isnot(None),
+            CriminalSituation.crime_category_name != ''
+        ).group_by(CriminalSituation.crime_category_name).all()
+        
+        omvd_stats = db.query(
+            CriminalSituation.omvd_name,
+            func.count(CriminalSituation.id).label("count")
+        ).filter(
+            CriminalSituation.omvd_name.isnot(None),
+            CriminalSituation.omvd_name != ''
+        ).group_by(CriminalSituation.omvd_name).order_by(
+            func.count(CriminalSituation.id).desc()
+        ).limit(5).all()
+        
+        monthly_crimes = db.query(
+            func.strftime('%Y-%m', CriminalSituation.crime_date).label("month"),
+            func.count(CriminalSituation.id).label("count")
+        ).filter(
+            CriminalSituation.crime_date.isnot(None)
+        ).group_by("month").order_by("month").limit(12).all()
+        
+        monthly_crime_labels = [get_month_name(m[0].split('-')[1]) for m in monthly_crimes]
+        monthly_crime_values = [m[1] for m in monthly_crimes]
+        
+        monthly_incidents = db.query(
+            func.strftime('%Y-%m', MilitarySituation.incident_date).label("month"),
+            func.count(MilitarySituation.id).label("incident_count"),
+            func.sum(MilitarySituation.victim_count).label("total_victims"),
+            func.sum(MilitarySituation.victim_death).label("total_deaths")
+        ).filter(
+            MilitarySituation.incident_date.isnot(None)
+        ).group_by("month").order_by("month").limit(12).all()
+        
+        monthly_incident_labels = [get_month_name(m[0].split('-')[1]) for m in monthly_incidents]
+        monthly_incident_counts = [m[1] for m in monthly_incidents]
+        monthly_victim_counts = [m[2] if m[2] else 0 for m in monthly_incidents]
+        monthly_death_counts = [m[3] if m[3] else 0 for m in monthly_incidents]
+        
+        temp_charts = []
+        
+        if crime_stats:
+            chart1_path = os.path.join(STATIC_DIR, "temp_chart1.png")
+            create_bar_chart([c[0] for c in crime_stats], [c[1] for c in crime_stats], 
+                            "Преступления по категориям", "Категория", "Количество", chart1_path)
+            temp_charts.append(chart1_path)
+        
+        if any(age_groups.values()):
+            chart2_path = os.path.join(STATIC_DIR, "temp_chart2.png")
+            create_bar_chart(list(age_groups.keys()), list(age_groups.values()), 
+                            "Уязвимые группы по возрасту", "Возрастная группа", "Количество пострадавших", chart2_path)
+            temp_charts.append(chart2_path)
+        
+        if omvd_stats:
+            chart3_path = os.path.join(STATIC_DIR, "temp_chart3.png")
+            create_pie_chart([o[0] for o in omvd_stats], [o[1] for o in omvd_stats], 
+                            "Территориальное распределение (Топ-5)", chart3_path)
+            temp_charts.append(chart3_path)
+        
+        if monthly_crime_labels:
+            chart4_path = os.path.join(STATIC_DIR, "temp_chart4.png")
+            create_line_chart(monthly_crime_labels, monthly_crime_values, 
+                             "Динамика преступлений по месяцам", chart4_path)
+            temp_charts.append(chart4_path)
+        
+        if monthly_incident_labels:
+            chart5_path = os.path.join(STATIC_DIR, "temp_chart5.png")
+            create_multi_bar_chart(monthly_incident_labels, monthly_incident_counts, 
+                                  monthly_victim_counts, monthly_death_counts, chart5_path)
+            temp_charts.append(chart5_path)
+        
+        # Создаём PDF
+        short_path = os.path.join(STATIC_DIR, "report_short.pdf")
+        doc = SimpleDocTemplate(short_path, pagesize=A4, topMargin=1.5*cm, bottomMargin=1.5*cm)
+        styles = getSampleStyleSheet()
+        story = []
+        
+        title_style = ParagraphStyle('CustomTitle', parent=styles['Heading1'], fontSize=20, alignment=1, spaceAfter=20)
+        normal_style = ParagraphStyle('CustomNormal', parent=styles['Normal'], fontSize=10, spaceAfter=5)
+        
+        story.append(Paragraph("Сводка по криминальной обстановке", title_style))
+        story.append(Spacer(1, 10))
+        
+        story.append(Paragraph(f"Всего преступлений: {total_crimes}", normal_style))
+        story.append(Paragraph(f"Общий ущерб: {total_damage/1000000:.2f} млн. руб.", normal_style))
+        story.append(Paragraph(f"Всего военных инцидентов: {total_incidents}", normal_style))
+        story.append(Paragraph(f"Всего пострадавших: {total_victims}", normal_style))
+        story.append(Spacer(1, 10))
+        
+        if top_crime:
+            story.append(Paragraph(f"Основной тип преступлений: {top_crime[0]} ({top_crime[1]} преступлений)", normal_style))
+        story.append(Spacer(1, 15))
+        
+        for i, chart_path in enumerate(temp_charts):
+            if os.path.exists(chart_path):
+                if i > 0:
+                    story.append(PageBreak())
+                img = ReportLabImage(chart_path, width=16*cm, height=12*cm)
+                story.append(img)
+        
+        doc.build(story)
+        
+        for chart_path in temp_charts:
+            if os.path.exists(chart_path):
+                os.remove(chart_path)
+        
+        with open(short_path, "rb") as f:
+            content = f.read()
+        
+        return Response(
+            content=content,
+            media_type="application/pdf",
+            headers={"Content-Disposition": "attachment; filename=report_short.pdf"}
+        )
+        
+    except Exception as e:
+        return Response(content=f"Ошибка: {str(e)}", status_code=500, media_type="text/plain")

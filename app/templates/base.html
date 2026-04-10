@@ -29,6 +29,10 @@
         .content {
             padding: 20px;
         }
+        hr {
+            margin: 10px 0;
+            border-color: rgba(255,255,255,0.3);
+        }
     </style>
     {% block extra_css %}{% endblock %}
 </head>
@@ -40,15 +44,12 @@
                 <div class="p-3">
                     <h4 class="text-white mb-4">📊 HersonDashboard</h4>
                     <nav class="nav flex-column">
-                        <a class="nav-link {% if active_page == 'dashboard' %}active{% endif %}" href="/">
-                            📈 Главная
-                        </a>
-                        <a class="nav-link {% if active_page == 'criminal' %}active{% endif %}" href="/criminal">
-                            🔍 Криминальная обстановка
-                        </a>
-                        <a class="nav-link {% if active_page == 'military' %}active{% endif %}" href="/military">
-                            ⚔️ Военные инциденты
-                        </a>
+                        <a class="nav-link {% if active_page == 'dashboard' %}active{% endif %}" href="/">📈 Главная</a>
+                        <a class="nav-link {% if active_page == 'criminal' %}active{% endif %}" href="/criminal">🔍 Криминальная обстановка</a>
+                        <a class="nav-link {% if active_page == 'military' %}active{% endif %}" href="/military">⚔️ Военные инциденты</a>
+                        <hr class="bg-light">
+                        <a class="nav-link" href="/export-full-report">📄 Полный отчёт</a>
+                        <a class="nav-link" href="/export-short-report">📄 Краткий отчёт</a>
                     </nav>
                 </div>
             </div>

@@ -8,3 +8,4 @@ openpyxl
 pandas
 reportlab
 matplotlib
+pypdf==4.0.1
