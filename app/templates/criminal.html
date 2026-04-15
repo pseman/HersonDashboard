@@ -21,38 +21,10 @@
                                 <input type="file" id="excelFile" name="file" class="form-control" accept=".xlsx,.xls" required>
                                 <div class="form-text">Файл должен содержать колонки: omvd_name, crime_date, registration_place, registration_number, registration_date, crime_article, fraud_type, victim_gender, victim_birthday, crime_category_name, sum_damage</div>
                             </div>
-                            <button type="submit" class="btn btn-success">
-                                📥 Импортировать
-                            </button>
-                            <a href="/criminal/download-template" class="btn btn-info ms-2">
-                                📄 Скачать шаблон
-                            </a>
-                            <a href="/criminal/export-pdf" class="btn btn-danger ms-2">
-                                📄 Экспорт PDF
-                            </a>
-							<button type="button" class="btn btn-danger ms-2" data-bs-toggle="modal" data-bs-target="#clearModal">
-								🗑️ Очистить таблицу
-							</button>
-
-							<!-- Модальное окно подтверждения -->
-							<div class="modal fade" id="clearModal" tabindex="-1">
-								<div class="modal-dialog">
-								<div class="modal-content">
-								<div class="modal-header bg-danger text-white">
-									<h5 class="modal-title">⚠️ Подтверждение очистки</h5>
-									<button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-								</div>
-								<div class="modal-body">
-									<p>Вы действительно хотите <strong>УДАЛИТЬ ВСЕ</strong> записи из таблицы криминальных ситуаций?</p>
-									<p class="text-danger">Это действие невозможно отменить!</p>
-								</div>
-									<div class="modal-footer">
-										<button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button>
-										<button type="button" id="confirmClear" class="btn btn-danger">Да, удалить всё</button>
-									</div>
-								</div>
-							</div>
-						</div>
+                            <button type="submit" class="btn btn-success">📥 Импортировать</button>
+                            <a href="/criminal/download-template" class="btn btn-info ms-2">📄 Скачать шаблон</a>
+                            <a href="/criminal/export-pdf" class="btn btn-danger ms-2">📄 Экспорт PDF</a>
+                            <button type="button" class="btn btn-danger ms-2" data-bs-toggle="modal" data-bs-target="#clearModal">🗑️ Очистить таблицу</button>
                         </form>
                     </div>
                     <div class="col-md-6">
@@ -64,61 +36,92 @@
     </div>
 </div>
 
-<!-- Форма добавления преступления -->
-<div class="card mb-4">
-    <div class="card-header">
-        <h5>Добавить новое преступление</h5>
-    </div>
-    <div class="card-body">
-        <form id="crimeForm">
-            <div class="row">
-                <div class="col-md-4 mb-3">
-					<label class="form-label">Территориальный орган (ОМВД)</label>
-					<select name="omvd_name" class="form-control" required>
-						<option value="">Выберите...</option>
-						{% for omvd in omvd_list %}
-						<option value="{{ omvd.omvd_name }}">{{ omvd.omvd_name }}</option>
-						{% endfor %}
-					</select>
-				</div>
-                <div class="col-md-3 mb-3">
-                    <label class="form-label">Дата преступления</label>
-                    <input type="date" name="crime_date" class="form-control" required>
-                </div>
-                <div class="col-md-3 mb-3">
-					<label class="form-label">Категория преступления</label>
-					<select name="crime_category_name" class="form-control" required>
-						<option value="">Выберите...</option>
-						{% for cat in categories %}
-						<option value="{{ cat.crime_name }}">{{ cat.crime_name }}</option>
-						{% endfor %}
-					</select>
-				</div>
-                <div class="col-md-2 mb-3">
-                    <label class="form-label">Сумма ущерба</label>
-                    <input type="number" step="0.01" name="sum_damage" class="form-control" placeholder="руб.">
-                </div>
+<!-- Кнопка для открытия модального окна добавления -->
+<div class="mb-3">
+    <button type="button" class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#addCrimeModal">
+        ➕ Добавить новое преступление
+    </button>
+</div>
+
+<!-- Модальное окно добавления преступления -->
+<div class="modal fade" id="addCrimeModal" tabindex="-1" aria-labelledby="addCrimeModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header bg-primary text-white">
+                <h5 class="modal-title" id="addCrimeModalLabel">➕ Добавление нового преступления</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Закрыть"></button>
             </div>
-            <div class="row">
-                <div class="col-md-4 mb-3">
-                    <label class="form-label">Место регистрации</label>
-                    <input type="text" name="registration_place" class="form-control">
-                </div>
-                <div class="col-md-3 mb-3">
-                    <label class="form-label">Номер регистрации</label>
-                    <input type="number" name="registration_number" class="form-control">
-                </div>
-                <div class="col-md-3 mb-3">
-                    <label class="form-label">Статья УК</label>
-                    <input type="text" name="crime_article" class="form-control" placeholder="ст. 159">
-                </div>
-                <div class="col-md-2 mb-3">
-                    <label class="form-label">Тип мошенничества</label>
-                    <input type="text" name="fraud_type" class="form-control">
-                </div>
+            <div class="modal-body">
+                <form id="crimeFormModal">
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            <label class="form-label">Территориальный орган (ОМВД) *</label>
+                            <select name="omvd_name" id="omvdModalSelect" class="form-select" required>
+                                <option value="">Выберите...</option>
+                            </select>
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label class="form-label">Категория преступления *</label>
+                            <select name="crime_category_name" id="categoryModalSelect" class="form-select" required>
+                                <option value="">Выберите...</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="row">
+                        <div class="col-md-4 mb-3">
+                            <label class="form-label">Дата преступления *</label>
+                            <input type="date" name="crime_date" class="form-control" required>
+                        </div>
+                        <div class="col-md-4 mb-3">
+                            <label class="form-label">Пол потерпевшего *</label>
+                            <select name="victim_gender" class="form-select" required>
+                                <option value="">Выберите...</option>
+                                <option value="0">Мужской</option>
+                                <option value="1">Женский</option>
+                            </select>
+                        </div>
+                        <div class="col-md-4 mb-3">
+                            <label class="form-label">Сумма ущерба (руб.)</label>
+                            <input type="number" step="0.01" name="sum_damage" class="form-control" placeholder="0.00">
+                        </div>
+                    </div>
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            <label class="form-label">Место регистрации</label>
+                            <input type="text" name="registration_place" class="form-control">
+                        </div>
+                        <div class="col-md-3 mb-3">
+                            <label class="form-label">Номер регистрации</label>
+                            <input type="number" name="registration_number" class="form-control">
+                        </div>
+                        <div class="col-md-3 mb-3">
+                            <label class="form-label">Дата регистрации</label>
+                            <input type="date" name="registration_date" class="form-control">
+                        </div>
+                    </div>
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            <label class="form-label">Статья УК</label>
+                            <input type="text" name="crime_article" class="form-control" placeholder="ст. 159">
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label class="form-label">Тип мошенничества</label>
+                            <input type="text" name="fraud_type" class="form-control">
+                        </div>
+                    </div>
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            <label class="form-label">Дата рождения потерпевшего</label>
+                            <input type="date" name="victim_birthday" class="form-control">
+                        </div>
+                    </div>
+                </form>
             </div>
-            <button type="submit" class="btn btn-primary">Добавить</button>
-        </form>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-danger" data-bs-dismiss="modal">Отменить</button>
+                <button type="button" class="btn btn-success" id="saveCrimeBtn">Сохранить</button>
+            </div>
+        </div>
     </div>
 </div>
 
@@ -130,142 +133,138 @@
     <div class="card-body">
         <table id="crimesTable" class="table table-striped">
             <thead>
-				<tr>
-					<th>ID</th>
-					<th>Дата</th>
-					<th>Территориальный орган (ОМВД)</th>
-					<th>Категория</th>
-					<th>Ущерб (руб.)</th>
-				</tr>
-			</thead>
-			<tbody>
-				{% for crime in crimes %}
-				<tr>
-					<td>{{ crime.id }}</td>
-					<td>{{ crime.crime_date }}</td>
-					<td>{{ crime.omvd_name }}</td>
-					<td>{{ crime.crime_category_name }}</td>
-					<td>{{ "{:,.2f}".format(crime.sum_damage) if crime.sum_damage else '0' }}</td>
-				</tr>
-				{% endfor %}
-			</tbody>
+                <tr>
+                    <th>ID</th>
+                    <th>Дата</th>
+                    <th>Территориальный орган (ОМВД)</th>
+                    <th>Категория</th>
+                    <th>Ущерб (руб.)</th>
+                </tr>
+            </thead>
+            <tbody></tbody>
         </table>
     </div>
+</div>
+
+<!-- Модальное окно подтверждения очистки -->
+<div class="modal fade" id="clearModal" tabindex="-1">
+    <div class="modal-dialog"><div class="modal-content">
+        <div class="modal-header bg-danger text-white"><h5>⚠️ Подтверждение очистки</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+        <div class="modal-body"><p>Вы действительно хотите <strong>УДАЛИТЬ ВСЕ</strong> записи из таблицы криминальных ситуаций?</p><p class="text-danger">Это действие невозможно отменить!</p></div>
+        <div class="modal-footer"><button class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button><button id="confirmClear" class="btn btn-danger">Да, удалить всё</button></div>
+    </div></div>
 </div>
 {% endblock %}
 
 {% block extra_js %}
 <script>
-$(document).ready(function() {
-    // Инициализация DataTable
-    $('#crimesTable').DataTable({
-        language: {
-            url: '//cdn.datatables.net/plug-ins/1.13.4/i18n/ru.json'
+    // Данные из сервера (JSON)
+    const omvdList = {{ omvd_json | safe }};
+    const categoryList = {{ category_json | safe }};
+    let crimesData = {{ crimes_json | safe }};
+
+    function renderTable() {
+        const tbody = document.querySelector('#crimesTable tbody');
+        tbody.innerHTML = '';
+        crimesData.forEach(c => {
+            const row = tbody.insertRow();
+            row.insertCell(0).innerText = c.id;
+            row.insertCell(1).innerText = c.crime_date;
+            row.insertCell(2).innerText = c.omvd_name;
+            row.insertCell(3).innerText = c.crime_category_name;
+            row.insertCell(4).innerText = c.sum_damage.toLocaleString();
+        });
+    }
+
+    function loadOmvdSelect() {
+        const select = document.getElementById('omvdModalSelect');
+        if (select) {
+            select.innerHTML = '<option value="">Выберите ОМВД...</option>';
+            omvdList.forEach(o => {
+                select.innerHTML += `<option value="${o.name}">${o.name}</option>`;
+            });
         }
-    });
-    
-    // Обработка формы добавления преступления
-    $('#crimeForm').on('submit', function(e) {
+    }
+
+    function loadCategorySelect() {
+        const select = document.getElementById('categoryModalSelect');
+        if (select) {
+            select.innerHTML = '<option value="">Выберите категорию...</option>';
+            categoryList.forEach(c => {
+                select.innerHTML += `<option value="${c.name}">${c.name}</option>`;
+            });
+        }
+    }
+
+    function showResult(msg, type) {
+        const div = document.getElementById('importResult');
+        div.className = `alert alert-${type}`;
+        div.innerHTML = msg;
+        div.style.display = 'block';
+        setTimeout(() => div.style.display = 'none', 5000);
+    }
+
+    // Импорт Excel
+    document.getElementById('importForm').onsubmit = async (e) => {
         e.preventDefault();
-        
-        var formData = {};
-        $(this).serializeArray().forEach(function(item) {
+        const formData = new FormData(e.target);
+        const res = await fetch('/criminal/import-excel', { method: 'POST', body: formData });
+        const result = await res.json();
+        if (res.ok) {
+            showResult(`✅ Импортировано: ${result.imported}`, 'success');
+            setTimeout(() => location.reload(), 2000);
+        } else {
+            showResult(`❌ ${result.detail}`, 'danger');
+        }
+    };
+
+    // Очистка таблицы
+    document.getElementById('confirmClear').onclick = async () => {
+        const res = await fetch('/criminal/clear-all', { method: 'POST' });
+        if (res.ok) {
+            showResult('✅ Таблица очищена', 'success');
+            setTimeout(() => location.reload(), 1500);
+        } else {
+            showResult('❌ Ошибка при очистке', 'danger');
+        }
+    };
+
+    // Добавление записи через модальное окно
+    document.getElementById('saveCrimeBtn').onclick = async () => {
+        const formData = {};
+        $('#crimeFormModal').serializeArray().forEach(item => {
             formData[item.name] = item.value;
         });
-        
-        $.ajax({
-            url: '/criminal/add',
-            method: 'POST',
-            contentType: 'application/json',
-            data: JSON.stringify(formData),
-            success: function(response) {
-                location.reload();
-            },
-            error: function(xhr) {
-                alert('Ошибка: ' + (xhr.responseJSON?.detail || 'Неизвестная ошибка'));
-            }
-        });
-    });
-    
-    // Обработка импорта Excel
-    $('#importForm').on('submit', function(e) {
-        e.preventDefault();
-        
-        var formData = new FormData(this);
-        var fileInput = document.getElementById('excelFile');
-        
-        if (!fileInput.files || fileInput.files.length === 0) {
-            showResult('Пожалуйста, выберите файл', 'danger');
+        // Валидация
+        if (!formData.omvd_name || !formData.crime_category_name || !formData.crime_date || formData.victim_gender === '') {
+            showResult('Пожалуйста, заполните обязательные поля: ОМВД, категория, дата преступления, пол потерпевшего', 'danger');
             return;
         }
-        
-        var file = fileInput.files[0];
-        if (!file.name.match(/\.(xlsx|xls)$/)) {
-            showResult('Пожалуйста, выберите файл Excel (.xlsx или .xls)', 'danger');
-            return;
-        }
-        
-        showResult('Импорт... Пожалуйста, подождите', 'info');
-        
-        $.ajax({
-            url: '/criminal/import-excel',
+        const res = await fetch('/criminal/add', {
             method: 'POST',
-            data: formData,
-            contentType: false,
-            processData: false,
-            success: function(response) {
-                if (response.status === 'success') {
-                    var message = '✅ Импортировано: ' + response.imported + ' записей';
-                    if (response.errors && response.errors.length > 0) {
-                        message += '<br>⚠️ Ошибки: ' + response.errors.length;
-                        console.log('Ошибки импорта:', response.errors);
-                    }
-                    showResult(message, 'success');
-                    setTimeout(function() {
-                        location.reload();
-                    }, 2000);
-                } else {
-                    showResult('❌ ' + response.message, 'danger');
-                }
-            },
-            error: function(xhr) {
-                var errorMsg = xhr.responseJSON?.detail || 'Ошибка при импорте';
-                showResult('❌ ' + errorMsg, 'danger');
-                console.error('Ошибка импорта:', xhr);
-            }
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(formData)
+        });
+        if (res.ok) {
+            $('#addCrimeModal').modal('hide');
+            showResult('✅ Запись успешно добавлена', 'success');
+            setTimeout(() => location.reload(), 1000);
+        } else {
+            const err = await res.json();
+            showResult(`❌ ${err.detail || 'Ошибка при добавлении'}`, 'danger');
+        }
+    };
+
+    // Загрузка справочников и отрисовка таблицы
+    loadOmvdSelect();
+    loadCategorySelect();
+    renderTable();
+
+    // Инициализация DataTable (если нужно)
+    $(document).ready(function() {
+        $('#crimesTable').DataTable({
+            language: { url: '//cdn.datatables.net/plug-ins/1.13.4/i18n/ru.json' }
         });
     });
-	
-	// Очистка таблицы
-	$('#confirmClear').on('click', function() {
-		$.ajax({
-			url: '/criminal/clear-all',
-			method: 'POST',
-			contentType: 'application/json',
-			success: function(response) {
-				$('#clearModal').modal('hide');
-				showResult('✅ ' + response.message, 'success');
-				setTimeout(function() {
-					location.reload();
-				}, 1500);
-			},
-				error: function(xhr) {
-				showResult('❌ Ошибка при очистке: ' + (xhr.responseJSON?.detail || 'Неизвестная ошибка'), 'danger');
-			}
-		});
-	});
-    
-    function showResult(message, type) {
-        var resultDiv = $('#importResult');
-        resultDiv.removeClass('alert-success alert-danger alert-info')
-                 .addClass('alert-' + type)
-                 .html(message)
-                 .show();
-        
-        setTimeout(function() {
-            resultDiv.fadeOut();
-        }, 5000);
-    }
-});
 </script>
 {% endblock %}

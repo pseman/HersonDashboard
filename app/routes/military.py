@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile, File
 from fastapi.responses import HTMLResponse, Response
 from sqlalchemy.orm import Session
 from app.database import get_db
-from app.models import MilitarySituation, IncidentInitiator
+from app.models import MilitarySituation
 from app.schemas import MilitarySituationCreate
 from app.services.excel_importer import ExcelImporter
 from app.services.pdf_generator import generate_military_report
@@ -10,10 +10,85 @@ import json
 
 router = APIRouter()
 
+@router.post("/import-excel")
+async def import_military_excel(
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db)
+):
+    """Импорт военных инцидентов из Excel"""
+    if not file.filename.endswith(('.xlsx', '.xls')):
+        raise HTTPException(status_code=400, detail="Файл должен быть в формате Excel")
+    try:
+        content = await file.read()
+        importer = ExcelImporter(db)
+        result = importer.import_military_situations(content)
+        if result['success']:
+            return {
+                "status": "success",
+                "imported": result.get('imported', 0),
+                "message": f"Импортировано {result.get('imported', 0)} записей",
+                "errors": result.get('errors', [])
+            }
+        else:
+            raise HTTPException(status_code=400, detail=result.get('error', 'Ошибка импорта'))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Ошибка при обработке файла: {str(e)}")
+
+@router.get("/download-template")
+async def download_military_template():
+    """Скачать шаблон Excel для военных инцидентов"""
+    importer = ExcelImporter(None)
+    content = importer.download_template_military()
+    return Response(
+        content=content,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": "attachment; filename=military_template.xlsx"}
+    )
+
+@router.post("/add")
+async def add_military_situation(
+    incident: MilitarySituationCreate,
+    db: Session = Depends(get_db)
+):
+    db_incident = MilitarySituation(**incident.dict())
+    db.add(db_incident)
+    db.commit()
+    db.refresh(db_incident)
+    return {"status": "success", "id": db_incident.id}
+
+@router.get("/export-pdf")
+async def export_military_pdf(db: Session = Depends(get_db)):
+    """Экспорт военных инцидентов в PDF"""
+    incidents = db.query(MilitarySituation).all()
+    data = {
+        'incidents': [
+            {
+                'id': i.id,
+                'incident_date': i.incident_date,
+                'incident_name': i.incident_name or '-',
+                'victim_count': i.victim_count or 0,
+                'victim_death': i.victim_death or 0,
+                'drone_count': i.drone_count or 0
+            }
+            for i in incidents
+        ]
+    }
+    return generate_military_report(data)
+
+@router.post("/clear-all")
+async def clear_all_incidents(db: Session = Depends(get_db)):
+    """Полная очистка таблицы военных инцидентов"""
+    try:
+        count = db.query(MilitarySituation).count()
+        db.query(MilitarySituation).delete()
+        db.commit()
+        return {"status": "success", "message": f"Удалено {count} записей"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 @router.get("/", response_class=HTMLResponse)
 async def military_list(request: Request, db: Session = Depends(get_db)):
     incidents = db.query(MilitarySituation).all()
-    initiators = db.query(IncidentInitiator).all()
     
     # Преобразуем данные в JSON для JavaScript
     incidents_data = []
@@ -29,13 +104,10 @@ async def military_list(request: Request, db: Session = Depends(get_db)):
             'victim_count': inc.victim_count or 0,
             'victim_death': inc.victim_death or 0,
             'drone_count': inc.drone_count or 0,
-            'initiator_name': inc.incident_initiator.initiator_name if inc.incident_initiator else ''
+            'initiator_name': inc.initiator_name or ''
         })
     
-    initiator_options = [{'id': i.id, 'name': i.initiator_name} for i in initiators]
-    
     incidents_json = json.dumps(incidents_data, ensure_ascii=False)
-    initiators_json = json.dumps(initiator_options, ensure_ascii=False)
     
     html = f"""
 <!DOCTYPE html>
@@ -105,52 +177,78 @@ async def military_list(request: Request, db: Session = Depends(get_db)):
                     </div>
                 </div>
                 
-                <div class="card mb-4">
-                    <div class="card-header">
-                        <h5>Добавить новый инцидент</h5>
-                    </div>
-                    <div class="card-body">
-                        <form id="incidentForm">
-                            <div class="row">
-                                <div class="col-md-3 mb-2">
-                                    <input type="date" name="incident_date" class="form-control" placeholder="Дата" required>
-                                </div>
-                                <div class="col-md-2 mb-2">
-                                    <input type="time" name="incident_time" class="form-control" placeholder="Время">
-                                </div>
-                                <div class="col-md-4 mb-2">
-                                    <input type="text" name="incident_name" class="form-control" placeholder="Название инцидента">
-                                </div>
-                                <div class="col-md-3 mb-2">
-                                    <input type="text" name="employe_action" class="form-control" placeholder="Действия сотрудников">
-                                </div>
+                <!-- Кнопка для открытия модального окна добавления -->
+                <div class="mb-3">
+                    <button type="button" class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#addIncidentModal">
+                        ➕ Добавить новый инцидент
+                    </button>
+                </div>
+
+                <!-- Модальное окно добавления инцидента -->
+                <div class="modal fade" id="addIncidentModal" tabindex="-1" aria-labelledby="addIncidentModalLabel" aria-hidden="true">
+                    <div class="modal-dialog modal-lg">
+                        <div class="modal-content">
+                            <div class="modal-header bg-primary text-white">
+                                <h5 class="modal-title" id="addIncidentModalLabel">➕ Добавление нового инцидента</h5>
+                                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Закрыть"></button>
                             </div>
-                            <div class="row">
-                                <div class="col-md-2 mb-2">
-                                    <input type="number" name="victim_count" class="form-control" placeholder="Пострадавшие" value="0">
-                                </div>
-                                <div class="col-md-2 mb-2">
-                                    <input type="number" name="victim_death" class="form-control" placeholder="Погибшие" value="0">
-                                </div>
-                                <div class="col-md-2 mb-2">
-                                    <input type="number" name="drone_count" class="form-control" placeholder="Дроны" value="0">
-                                </div>
-                                <div class="col-md-3 mb-2">
-                                    <select name="incident_initiator_id" class="form-control" id="initiatorSelect">
-                                        <option value="">Выберите инициатора...</option>
-                                    </select>
-                                </div>
-                                <div class="col-md-3 mb-2">
-                                    <input type="time" name="time_cancel_incident" class="form-control" placeholder="Время отмены">
-                                </div>
+                            <div class="modal-body">
+                                <form id="incidentFormModal">
+                                    <div class="row">
+                                        <div class="col-md-3 mb-3">
+                                            <label class="form-label">Дата инцидента *</label>
+                                            <input type="date" name="incident_date" class="form-control" required>
+                                        </div>
+                                        <div class="col-md-3 mb-3">
+                                            <label class="form-label">Время</label>
+                                            <input type="time" name="incident_time" class="form-control">
+                                        </div>
+                                        <div class="col-md-6 mb-3">
+                                            <label class="form-label">Название инцидента</label>
+                                            <input type="text" name="incident_name" class="form-control">
+                                        </div>
+                                    </div>
+                                    <div class="row">
+                                        <div class="col-md-6 mb-3">
+                                            <label class="form-label">Действия сотрудников</label>
+                                            <input type="text" name="employe_action" class="form-control">
+                                        </div>
+                                        <div class="col-md-3 mb-3">
+                                            <label class="form-label">Время отмены</label>
+                                            <input type="time" name="time_cancel_incident" class="form-control">
+                                        </div>
+                                        <div class="col-md-3 mb-3">
+                                            <label class="form-label">Инициатор</label>
+                                            <input type="text" name="initiator_name" class="form-control" placeholder="Кто инициировал">
+                                        </div>
+                                    </div>
+                                    <div class="row">
+                                        <div class="col-md-6 mb-3">
+                                            <label class="form-label">Последствия инцидента</label>
+                                            <input type="text" name="incident_effect" class="form-control">
+                                        </div>
+                                    </div>
+                                    <div class="row">
+                                        <div class="col-md-4 mb-3">
+                                            <label class="form-label">Количество пострадавших</label>
+                                            <input type="number" name="victim_count" class="form-control" value="0">
+                                        </div>
+                                        <div class="col-md-4 mb-3">
+                                            <label class="form-label">Количество погибших</label>
+                                            <input type="number" name="victim_death" class="form-control" value="0">
+                                        </div>
+                                        <div class="col-md-4 mb-3">
+                                            <label class="form-label">Количество дронов</label>
+                                            <input type="number" name="drone_count" class="form-control" value="0">
+                                        </div>
+                                    </div>
+                                </form>
                             </div>
-                            <div class="row">
-                                <div class="col-md-12 mb-2">
-                                    <input type="text" name="incident_effect" class="form-control" placeholder="Последствия инцидента">
-                                </div>
+                            <div class="modal-footer">
+                                <button type="button" class="btn btn-danger" data-bs-dismiss="modal">Отменить</button>
+                                <button type="button" class="btn btn-success" id="saveIncidentBtn">Сохранить</button>
                             </div>
-                            <button type="submit" class="btn btn-primary">Добавить</button>
-                        </form>
+                        </div>
                     </div>
                 </div>
                 
@@ -161,7 +259,19 @@ async def military_list(request: Request, db: Session = Depends(get_db)):
                     <div class="card-body">
                         <table id="incidentsTable" class="table table-striped">
                             <thead>
-                                <tr><th>ID</th><th>Дата</th><th>Время</th><th>Название</th><th>Пострадавшие</th><th>Погибшие</th><th>Дроны</th><th>Инициатор</th></tr>
+                                <tr>
+                                    <th>ID</th>
+                                    <th>Дата</th>
+                                    <th>Время</th>
+                                    <th>Название</th>
+                                    <th>Действия сотрудников</th>
+                                    <th>Время отмены</th>
+                                    <th>Последствия</th>
+                                    <th>Пострадавшие</th>
+                                    <th>Погибшие</th>
+                                    <th>Дроны</th>
+                                    <th>Инициатор</th>
+                                </tr>
                             </thead>
                             <tbody></tbody>
                         </table>
@@ -180,7 +290,6 @@ async def military_list(request: Request, db: Session = Depends(get_db)):
     </div>
     
     <script>
-        const initiatorList = {initiators_json};
         let incidentsData = {incidents_json};
         
         function renderTable() {{
@@ -192,17 +301,13 @@ async def military_list(request: Request, db: Session = Depends(get_db)):
                 row.insertCell(1).innerText = i.incident_date;
                 row.insertCell(2).innerText = i.incident_time;
                 row.insertCell(3).innerText = i.incident_name;
-                row.insertCell(4).innerText = i.victim_count;
-                row.insertCell(5).innerText = i.victim_death;
-                row.insertCell(6).innerText = i.drone_count;
-                row.insertCell(7).innerText = i.initiator_name;
-            }});
-        }}
-        
-        function loadInitiatorSelect() {{
-            const select = document.getElementById('initiatorSelect');
-            initiatorList.forEach(i => {{
-                select.innerHTML += `<option value="${{i.id}}">${{i.name}}</option>`;
+                row.insertCell(4).innerText = i.employe_action;
+                row.insertCell(5).innerText = i.time_cancel_incident;
+                row.insertCell(6).innerText = i.incident_effect;
+                row.insertCell(7).innerText = i.victim_count;
+                row.insertCell(8).innerText = i.victim_death;
+                row.insertCell(9).innerText = i.drone_count;
+                row.insertCell(10).innerText = i.initiator_name;
             }});
         }}
         
@@ -213,15 +318,6 @@ async def military_list(request: Request, db: Session = Depends(get_db)):
             div.style.display = 'block';
             setTimeout(() => div.style.display = 'none', 5000);
         }}
-        
-        document.getElementById('incidentForm').onsubmit = async (e) => {{
-            e.preventDefault();
-            const formData = new FormData(e.target);
-            const data = Object.fromEntries(formData.entries());
-            const res = await fetch('/military/add', {{ method: 'POST', headers: {{'Content-Type': 'application/json'}}, body: JSON.stringify(data) }});
-            if (res.ok) location.reload();
-            else alert('Ошибка');
-        }};
         
         document.getElementById('importForm').onsubmit = async (e) => {{
             e.preventDefault();
@@ -238,79 +334,45 @@ async def military_list(request: Request, db: Session = Depends(get_db)):
             if (res.ok) location.reload();
         }};
         
-        loadInitiatorSelect();
+        document.getElementById('saveIncidentBtn').onclick = async () => {{
+            const formData = {{}};
+            $('#incidentFormModal').serializeArray().forEach(item => {{
+                formData[item.name] = item.value;
+            }});
+            if (!formData.incident_date) {{
+                showResult('Пожалуйста, заполните обязательное поле: дата инцидента', 'danger');
+                return;
+            }}
+            // Преобразуем числовые поля
+            formData.victim_count = parseInt(formData.victim_count) || 0;
+            formData.victim_death = parseInt(formData.victim_death) || 0;
+            formData.drone_count = parseInt(formData.drone_count) || 0;
+            
+            const res = await fetch('/military/add', {{
+                method: 'POST',
+                headers: {{ 'Content-Type': 'application/json' }},
+                body: JSON.stringify(formData)
+            }});
+            if (res.ok) {{
+                $('#addIncidentModal').modal('hide');
+                showResult('✅ Запись успешно добавлена', 'success');
+                setTimeout(() => location.reload(), 1000);
+            }} else {{
+                const err = await res.json();
+                showResult(`❌ ${{err.detail || 'Ошибка при добавлении'}}`, 'danger');
+            }}
+        }};
+        
         renderTable();
+        $(document).ready(function() {{
+            $('#incidentsTable').DataTable({{
+                language: {{ url: '//cdn.datatables.net/plug-ins/1.13.4/i18n/ru.json' }},
+                pageLength: 25,
+                order: [[0, 'desc']]
+            }});
+        }});
     </script>
 </body>
 </html>
     """
     return HTMLResponse(content=html)
-    
-@router.post("/clear-all")
-async def clear_all_incidents(db: Session = Depends(get_db)):
-    """Полная очистка таблицы военных инцидентов"""
-    try:
-        count = db.query(MilitarySituation).count()
-        db.query(MilitarySituation).delete()
-        db.commit()
-        return {
-            "status": "success",
-            "message": f"Удалено {count} записей"
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-        
-@router.post("/import-excel")
-async def import_military_excel(
-    file: UploadFile = File(...),
-    db: Session = Depends(get_db)
-):
-    """Импорт военных инцидентов из Excel"""
-    if not file.filename.endswith(('.xlsx', '.xls')):
-        raise HTTPException(status_code=400, detail="Файл должен быть в формате Excel")
-    
-    try:
-        content = await file.read()
-        importer = ExcelImporter(db)
-        result = importer.import_military_situations(content)
-        
-        if result['success']:
-            return {
-                "status": "success",
-                "imported": result.get('imported', 0),
-                "message": f"Импортировано {result.get('imported', 0)} записей",
-                "errors": result.get('errors', [])
-            }
-        else:
-            raise HTTPException(status_code=400, detail=result.get('error', 'Ошибка импорта'))
-            
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Ошибка при обработке файла: {str(e)}")
-
-
-@router.get("/download-template")
-async def download_military_template():
-    """Скачать шаблон Excel для военных инцидентов"""
-    importer = ExcelImporter(None)
-    content = importer.download_template_military()
-    
-    return Response(
-        content=content,
-        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": "attachment; filename=military_template.xlsx"}
-    )
-
-
-@router.post("/clear-all")
-async def clear_all_incidents(db: Session = Depends(get_db)):
-    """Полная очистка таблицы военных инцидентов"""
-    try:
-        count = db.query(MilitarySituation).count()
-        db.query(MilitarySituation).delete()
-        db.commit()
-        return {
-            "status": "success",
-            "message": f"Удалено {count} записей"
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
